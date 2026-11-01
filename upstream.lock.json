@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/YusenDu/codex-remote-bridge",
+    "originalRepository": "https://github.com/friuns2/codexui",
+    "version": "0.1.101",
+    "source": {
+      "url": "https://github.com/YusenDu/codex-remote-bridge/releases/download/v0.1.101/codex-web-v0.1.101-source.tar.gz",
+      "sha256": "ec46b2ab33a3a48786268b87dc571c5cdf1b9bf4a303d514ad44e7ffd465aa03"
+    },
+    "web": {
+      "url": "https://github.com/YusenDu/codex-remote-bridge/releases/download/v0.1.101/codex-web-v0.1.101-prebuilt.zip",
+      "sha256": "a0390b4d99ba2205ea1e4053b62479554b54e61b832268c97b011de1c4e410d4"
+    }
+  },
+  "cloudflared": {
+    "version": "2026.10.7",
+    "windows-x64": {
+      "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.10.7/cloudflared-windows-amd64.exe",
+      "sha256": "2493dbc168923bb3e59e5e7716f71deced92992eea9acd6e9d74f84ac7751343"
+    }
+  },
+  "node": { "version": "24.16.0", "minimum": "24.16.0" },
+  "android": {
+    "minimumApi": 26,
+    "targetApi": 35,
+    "jdk": 17,
+    "buildTools": "35.0.0"
+  }
+}

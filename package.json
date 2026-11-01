@@ -1,0 +1,40 @@
+{
+  "name": "codex-phone",
+  "version": "0.1.0",
+  "description": "Self-hosted Android access to existing native Codex Desktop conversations",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "author": "SunS1eep1ng",
+  "repository": "github:SunS1eep1ng/codex-phone",
+  "engines": {
+    "node": ">=24.16.0"
+  },
+  "scripts": {
+    "prepare:upstream": "node scripts/prepare-upstream.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:native": "node scripts/test-native.mjs",
+    "audit:publish": "node scripts/audit-publish.mjs",
+    "cli": "node dist/cli.mjs",
+    "build:android": "node scripts/android-build.mjs"
+  },
+  "dependencies": {
+    "@composio/client": "0.1.0-alpha.66",
+    "commander": "13.1.0",
+    "express": "5.1.0",
+    "firebase": "12.2.1",
+    "highlight.js": "11.11.1",
+    "https-proxy-agent": "7.0.6",
+    "ws": "8.22.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "miniflare": "5.20261023.3-beta",
+    "prettier": "3.6.2",
+    "wrangler": "4.156.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.14.7"
+  }
+}
