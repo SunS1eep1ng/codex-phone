@@ -1,6 +1,6 @@
 {
   "name": "codex-phone",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Self-hosted Android access to existing native Codex Desktop conversations",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "test": "node --test tests/*.test.mjs",
     "test:native": "node scripts/test-native.mjs",
     "audit:publish": "node scripts/audit-publish.mjs",
-    "cli": "node dist/cli.mjs",
+    "cli": "node scripts/manage.mjs",
     "build:android": "node scripts/android-build.mjs"
   },
   "dependencies": {
@@ -31,6 +31,7 @@
   "devDependencies": {
     "esbuild": "0.28.2",
     "miniflare": "5.20261023.3-beta",
+    "parse5": "8.0.0",
     "prettier": "3.6.2",
     "wrangler": "4.156.0"
   },

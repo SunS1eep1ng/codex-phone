@@ -10,6 +10,9 @@ import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const { version } = JSON.parse(
+  await readFile(join(root, "package.json"), "utf8"),
+);
 const args = process.argv.slice(2);
 const option = (name) => {
   const i = args.indexOf(name);
@@ -138,7 +141,7 @@ await mkdir(join(root, "release"), { recursive: true });
 const out = join(
   root,
   "release",
-  `codex-phone-v0.1.0${debug ? "-dev" : ""}-unsigned.apk`,
+  `codex-phone-v${version}${debug ? "-dev" : ""}-unsigned.apk`,
 );
 run(join(tools, exe("zipalign")), ["-p", "-f", "4", unsigned, out]);
 console.log("Unsigned APK: " + out);

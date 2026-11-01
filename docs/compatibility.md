@@ -2,14 +2,19 @@
 
 Evidence date: 2026-11-01. Scope is explicit; a prototype result does not validate this new implementation.
 
+The 0.1.1 recovery candidate is checked locally with isolated fault-injection and browser recovery tests. The live Desktop read-only evidence below belongs to 0.1.0; the changed 0.1.1 adapter and APK have not been accepted on the real Desktop/phone deployment. No existing paired installation is modified by these tests.
+
+0.1.1 为本地恢复候选，已做隔离故障注入与浏览器恢复验证。下表原生桌面只读证据属于 0.1.0，不能据此声称 0.1.1 新适配器／APK 已完成真实电脑与手机验收。
+
 | Component / check | Status / 状态 | Evidence / 范围 |
 |---|---|---|
 | Windows 11 x64 + Node 24.16.0 | Tested / 已实测 | Build, isolated gateway/Agent tests, native read-only check |
-| Official Desktop 26.1023.6123.0 | Read-only tested / 只读已实测 | New adapter discovers live manager, real thread/list and canonical thread/read |
+| Official Desktop 26.1023.6123.0 | 0.1.0 read-only tested / 旧版只读已实测 | 0.1.1 remains isolated-only; do not infer live acceptance |
 | Other Desktop versions | Not tested / 尚未实测 | Capability probe required; no compatibility claim |
 | Upstream v0.1.101 | Tested / 已实测 | Verified archive hashes, bundled library/static UI, isolated full Agent integration |
 | Native send/resume + approval adapter | Simulated / 模拟已验证 | Same thread ID, resume-before-send, approval notification/reply mapping |
-| Public APK API 26 / target 35 | Build verified / 构建已验证 | aapt2/javac/d8/zipalign; API 26 is an install minimum |
+| Public APK API 26 / target 35 | 0.1.1 build/signing verified / 构建签名已验证 | aapt2/javac/d8/zipalign/apksigner; API 26 is an install minimum |
+| Recovery/rollback/control/stream lifecycle | Isolated tested / 隔离已验证 | No native/phone/real cloud actions; details in CHANGELOG and test files |
 | New public APK on Huawei Mate 70 HarmonyOS 4.x | Not tested / 尚未实测 | Earlier personal prototype worked; that is not acceptance of this APK |
 | Cloudflare template | Isolated workerd tested / 隔离运行时已验证 | KV registration, authenticated WSS upgrade forwarding; no live account involved |
 | New managed provider on a real account | Not tested / 尚未实测 | Per-user deployment/phone reachability required |

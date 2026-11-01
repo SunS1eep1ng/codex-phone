@@ -1,5 +1,6 @@
 import http from "node:http";
 import { equal } from "./auth.mjs";
+import { verifyControlRequest, controlResponse } from "./control-auth.mjs";
 const allowedAPI = new Set([
   "rpc",
   "events",
@@ -32,7 +33,7 @@ export const json = (res, status, value) => {
   });
   res.end(JSON.stringify(value));
 };
-export async function bodyJSON(req, limit = 16384) {
+export async function bodyText(req, limit = 16384) {
   let size = 0;
   const chunks = [];
   for await (const chunk of req) {
@@ -41,7 +42,10 @@ export async function bodyJSON(req, limit = 16384) {
       throw Object.assign(Error("request_too_large"), { status: 413 });
     chunks.push(chunk);
   }
-  return JSON.parse(Buffer.concat(chunks).toString() || "{}");
+  return Buffer.concat(chunks).toString();
+}
+export async function bodyJSON(req, limit = 16384) {
+  return JSON.parse((await bodyText(req, limit)) || "{}");
 }
 export function listen(server, port) {
   return new Promise((resolve, reject) => {
@@ -59,10 +63,41 @@ export function createGateway({
   health,
   apkPath,
   nativeRPC,
+  recovery,
+  acknowledgeOperation,
+  staticAssets = {},
+  authCheckIntervalMs = 1000,
 }) {
   const virtual = http.createServer();
   upstream.attachWebSocket(virtual);
   const sockets = new Map();
+  const streams = new Map();
+  const pageEpochs = new Map();
+  const validPage = (value) =>
+    typeof value === "string" && /^[A-Za-z0-9._:-]{1,80}$/.test(value)
+      ? value
+      : null;
+  const pageEpoch = (phoneId, pageId, bump = false) => {
+    if (!pageId) return null;
+    const key = phoneId + ":" + pageId;
+    const value = (pageEpochs.get(key) || 0) + (bump ? 1 : 0);
+    pageEpochs.delete(key);
+    pageEpochs.set(key, value);
+    while (pageEpochs.size > 1024)
+      pageEpochs.delete(pageEpochs.keys().next().value);
+    return value;
+  };
+  const checkAuthorizations = () => {
+    for (const [socket, entry] of sockets)
+      if (!auth.authorized(entry.req)) socket.destroy();
+    for (const [response, entry] of streams)
+      if (!auth.authorized(entry.req)) response.destroy();
+  };
+  const authorizationTimer = setInterval(
+    checkAuthorizations,
+    authCheckIntervalMs,
+  );
+  authorizationTimer.unref();
   const reject = (socket) => {
     socket.end(
       "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
@@ -73,6 +108,28 @@ export function createGateway({
       const url = new URL(req.url, "http://localhost");
       const path = url.pathname;
       res.setHeader("Cache-Control", "no-store");
+      const asset = staticAssets[path];
+      if (asset && ["GET", "HEAD"].includes(req.method)) {
+        const { createReadStream } = await import("node:fs");
+        res.setHeader(
+          "Content-Type",
+          asset.type || "text/javascript; charset=utf-8",
+        );
+        res.setHeader("Cache-Control", asset.cacheControl || "no-cache");
+        if (asset.cacheable) res.setHeader("X-Codex-Phone-Static", "1");
+        if (path === "/sw.js") res.setHeader("Service-Worker-Allowed", "/");
+        const stream = createReadStream(asset.path);
+        stream.once("error", () => {
+          if (!res.headersSent)
+            json(res, 503, { error: "client_assets_missing" });
+          else res.destroy();
+        });
+        if (req.method === "HEAD") {
+          stream.destroy();
+          res.end();
+        } else stream.pipe(res);
+        return;
+      }
       if (path === "/phone-api/info" && req.method === "GET")
         return json(res, 200, {
           deviceId: config.deviceId,
@@ -117,9 +174,33 @@ export function createGateway({
         );
         return json(res, 200, safe);
       }
-      if (!auth.authorized(req))
-        return json(res, 401, { error: "phone_not_authorized" });
+      const phone = auth.authorized(req);
+      if (!phone) return json(res, 401, { error: "phone_not_authorized" });
+      streams.set(res, { req, phoneId: phone.phoneId });
+      const release = () => streams.delete(res);
+      res.once("finish", release);
+      res.once("close", release);
       if (path === "/phone-api/health") return json(res, 200, await health());
+      if (path === "/phone-api/recovery" && req.method === "GET") {
+        if (!recovery)
+          return json(res, 503, { ok: false, error: "recovery_unavailable" });
+        const result = await recovery(
+          url.searchParams.get("threadId") || null,
+          { probe: url.searchParams.get("probe") === "1" },
+        );
+        const pageId = validPage(url.searchParams.get("pageId"));
+        const sequence = pageEpoch(phone.phoneId, pageId);
+        return json(res, result.ok ? 200 : 503, {
+          ...result,
+          ...(pageId ? { epoch: `${result.epoch}:page:${sequence}` } : {}),
+        });
+      }
+      if (path === "/phone-api/recovery/ack" && req.method === "POST") {
+        if (!acknowledgeOperation)
+          return json(res, 503, { error: "recovery_unavailable" });
+        const body = await bodyJSON(req);
+        return json(res, 200, await acknowledgeOperation(body.operationId));
+      }
       if (path === "/codex-api/meta/methods")
         return json(res, 200, {
           data: [
@@ -150,19 +231,22 @@ export function createGateway({
             "server/request/resolved",
           ],
         });
-      if (nativeRPC && path === "/codex-api/desktop-bridge/status")
+      if (nativeRPC && path === "/codex-api/desktop-bridge/status") {
+        const status = await health();
         return json(res, 200, {
-          ...(await health()),
+          ...status,
+          state: status.state || (status.ok ? "ready" : "disconnected"),
           enabled: true,
           mode: "agent",
           devices: [
             {
               deviceId: config.deviceId,
               deviceName: config.deviceName,
-              connected: true,
+              connected: status.ok === true,
             },
           ],
         });
+      }
       // These upstream auxiliary routes otherwise read through its standalone AppServer.
       // Serve them from the same native manager, without spawning a second conversation.
       if (
@@ -179,7 +263,7 @@ export function createGateway({
         if (path.endsWith("/thread-stream-events"))
           return json(res, 200, { events: [] });
         if (path.endsWith("/thread-file-change-fallback"))
-          return json(res, 200, { items: [] });
+          return json(res, 200, { data: [] });
         const result = await nativeRPC("thread/read", {
           threadId,
           includeTurns: true,
@@ -242,65 +326,103 @@ export function createGateway({
     }
   });
   const onRevoke = (id) => {
-    for (const [socket, phoneId] of sockets)
-      if (phoneId === id) socket.destroy();
+    for (const [socket, entry] of sockets)
+      if (entry.phoneId === id) socket.destroy();
+    for (const [response, entry] of streams)
+      if (entry.phoneId === id) response.destroy();
   };
   auth.listeners.add(onRevoke);
   server.on("upgrade", (req, socket, head) => {
-    const path = new URL(req.url, "http://localhost").pathname;
-    const phone = auth.authorized(req);
-    if (
-      !phone ||
-      path !== "/codex-api/ws" ||
-      (req.headers.origin && req.headers.origin !== config.relay.endpoint)
-    )
-      return reject(socket);
-    sockets.set(socket, phone.phoneId);
-    const expiry = setInterval(() => {
-      if (!auth.authorized(req)) socket.destroy();
-    }, 30000);
-    expiry.unref();
-    socket.once("close", () => {
-      clearInterval(expiry);
-      sockets.delete(socket);
-    });
-    virtual.emit("upgrade", req, socket, head);
+    try {
+      const path = new URL(req.url, "http://localhost").pathname;
+      const phone = auth.authorized(req);
+      if (
+        !phone ||
+        path !== "/codex-api/ws" ||
+        (req.headers.origin && req.headers.origin !== config.relay.endpoint)
+      )
+        return reject(socket);
+      sockets.set(socket, { phoneId: phone.phoneId, req });
+      const pageId = validPage(
+        /(?:^|;\s*)codex_phone_page=([^;]+)/.exec(
+          req.headers.cookie || "",
+        )?.[1],
+      );
+      pageEpoch(phone.phoneId, pageId);
+      socket.once("close", () => {
+        sockets.delete(socket);
+        pageEpoch(phone.phoneId, pageId, true);
+      });
+      virtual.emit("upgrade", req, socket, head);
+    } catch {
+      socket.end(
+        "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+    }
   });
-  server.on("close", () => auth.listeners.delete(onRevoke));
+  server.on("close", () => {
+    auth.listeners.delete(onRevoke);
+    clearInterval(authorizationTimer);
+  });
   return {
     server,
     virtual,
     close() {
+      clearInterval(authorizationTimer);
+      auth.listeners.delete(onRevoke);
       for (const socket of sockets.keys()) socket.destroy();
+      for (const response of streams.keys()) response.destroy();
       server.closeAllConnections();
-      server.close();
+      return server.listening
+        ? new Promise((resolve) => server.close(resolve))
+        : Promise.resolve();
     },
   };
 }
 export function createControl({ config, upstream, actions }) {
   const virtual = http.createServer();
   upstream.attachWebSocket(virtual);
+  const seen = new Map();
+  const upgrades = new Set();
   const server = http.createServer(async (req, res) => {
-    if (!equal(req.headers.authorization, "Bearer " + config.adminSecret))
-      return json(res, 401, { error: "local_administrator_required" });
+    const reply = (status, value) => {
+      const response = controlResponse(
+        config,
+        req.headers["x-codex-control-nonce"],
+        status,
+        value,
+      );
+      res.writeHead(status, {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+        ...response.headers,
+      });
+      res.end(response.text);
+    };
     try {
+      const text = await bodyText(req);
+      if (!verifyControlRequest(config, req, text, seen))
+        return reply(401, { error: "local_administrator_required" });
       const name = new URL(req.url, "http://localhost").pathname.slice(1);
       if (
         !["status", "doctor", "pair", "phones", "revoke", "stop"].includes(name)
       )
-        return json(res, 404, { error: "not_found" });
+        return reply(404, { error: "not_found" });
       if (
         !["status", "doctor", "phones"].includes(name) &&
         req.method !== "POST"
       )
-        return json(res, 405, { error: "method_not_allowed" });
-      json(
-        res,
+        return reply(405, { error: "method_not_allowed" });
+      reply(
         200,
-        await actions(name, req.method === "POST" ? await bodyJSON(req) : {}),
+        await actions(
+          name,
+          req.method === "POST" ? JSON.parse(text || "{}") : {},
+        ),
       );
     } catch (e) {
-      json(res, 400, { error: e.code || e.message });
+      if (!res.headersSent) reply(400, { error: e.code || e.message });
+      else res.destroy();
     }
   });
   server.on("upgrade", (req, socket, head) => {
@@ -311,7 +433,12 @@ export function createControl({ config, upstream, actions }) {
       socket.destroy();
       return;
     }
+    upgrades.add(socket);
+    socket.once("close", () => upgrades.delete(socket));
     virtual.emit("upgrade", req, socket, head);
   });
+  server.closeOwnedSockets = () => {
+    for (const socket of upgrades) socket.destroy();
+  };
   return server;
 }

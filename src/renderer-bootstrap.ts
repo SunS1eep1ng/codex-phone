@@ -25,8 +25,12 @@ const NOTIFICATION_METHODS = [
   "serverRequest/resolved",
 ] as const;
 
-export function createRendererBootstrapSource(bindingName: string): string {
-  const globalNameJson = JSON.stringify(CODEX_DESKTOP_ADAPTER_GLOBAL);
+export function createRendererBootstrapSource(
+  bindingName: string,
+  namespace = CODEX_DESKTOP_ADAPTER_GLOBAL,
+  lifecycle = { familyNamespace: namespace, generation: 0 },
+): string {
+  const globalNameJson = JSON.stringify(namespace);
   const bindingNameJson = JSON.stringify(bindingName);
   const notificationMethodsJson = JSON.stringify(NOTIFICATION_METHODS);
 
@@ -35,6 +39,20 @@ export function createRendererBootstrapSource(bindingName: string): string {
     const globalName = ${globalNameJson};
     const bindingName = ${bindingNameJson};
     const notificationMethods = ${notificationMethodsJson};
+    const lifecycle = ${JSON.stringify(lifecycle)};
+    const familyKey = lifecycle.familyNamespace + '_lifecycle';
+    const previousLifecycle = globalThis[familyKey];
+    if ((lifecycle.generation > 0 && globalThis[globalName + '_cancelled']) || (previousLifecycle && previousLifecycle.generation > lifecycle.generation)) {
+      delete globalThis[globalName + '_manager'];
+      throw new Error('Native adapter lifecycle was cancelled.');
+    }
+    if (lifecycle.generation === 0) delete globalThis[globalName + '_cancelled'];
+    if (previousLifecycle && previousLifecycle.namespace !== globalName) {
+      const oldAdapter = globalThis[previousLifecycle.namespace];
+      if (oldAdapter && typeof oldAdapter.dispose === 'function') oldAdapter.dispose();
+      delete globalThis[previousLifecycle.namespace + '_manager'];
+    }
+    globalThis[familyKey] = { generation: lifecycle.generation, namespace: globalName };
     const manager = globalThis[globalName + '_manager'];
     if (!manager || manager.disposed || manager.getHostId() !== 'local') throw new Error('Compatible native Desktop manager required.');
 
@@ -326,9 +344,10 @@ export function createRendererBootstrapSource(bindingName: string): string {
 export function createRendererCommandSource(
   command: "rpc" | "startTurn" | "interruptTurn",
   params: Record<string, unknown>,
+  namespace = CODEX_DESKTOP_ADAPTER_GLOBAL,
 ): string {
   return `(async () => {
-    const adapter = globalThis[${JSON.stringify(CODEX_DESKTOP_ADAPTER_GLOBAL)}];
+    const adapter = globalThis[${JSON.stringify(namespace)}];
     if (!adapter || adapter.protocol !== ${CODEX_DESKTOP_ADAPTER_PROTOCOL}) {
       throw new Error('Codex Desktop CDP adapter is not installed.');
     }
@@ -340,10 +359,20 @@ export function createRendererCommandSource(
   })()`;
 }
 
-export function createRendererDisposeSource(): string {
+export function createRendererDisposeSource(
+  namespace = CODEX_DESKTOP_ADAPTER_GLOBAL,
+  lifecycle = { familyNamespace: namespace, generation: 0 },
+): string {
   return `(() => {
-    const adapter = globalThis[${JSON.stringify(CODEX_DESKTOP_ADAPTER_GLOBAL)}];
+    const namespace = ${JSON.stringify(namespace)};
+    const lifecycle = ${JSON.stringify(lifecycle)};
+    const familyKey = lifecycle.familyNamespace + '_lifecycle';
+    const previous = globalThis[familyKey];
+    if (!previous || previous.generation <= lifecycle.generation) globalThis[familyKey] = { generation: lifecycle.generation, namespace };
+    globalThis[namespace + '_cancelled'] = true;
+    const adapter = globalThis[namespace];
     if (adapter && typeof adapter.dispose === 'function') adapter.dispose();
+    delete globalThis[namespace + '_manager'];
     return true;
   })()`;
 }

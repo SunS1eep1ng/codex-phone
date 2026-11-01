@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import net from "node:net";
 import { PhoneError } from "./state.mjs";
+import { readActiveInstallation } from "../scripts/install-pointer.mjs";
 const exec = promisify(execFile);
 export async function powershell(script, args = []) {
   const { stdout } = await exec(
@@ -80,13 +81,21 @@ export async function freePort(preferred = 0) {
     });
   });
 }
-export async function ensureDesktop(config) {
+export async function ensureDesktop(
+  config,
+  { signal, checkCancelled = async () => {} } = {},
+) {
+  signal?.throwIfAborted();
+  await checkCancelled();
   const data = await inventory();
+  signal?.throwIfAborted();
+  await checkCancelled();
   for (const p of data.running) {
     const match = /--remote-debugging-port[= ](\d+)/.exec(p.commandLine || "");
     if (match) {
       const port = Number(match[1]);
       await verifyDesktopPort(port);
+      signal?.throwIfAborted();
       config.ports.desktop = port;
       return { ok: true, reused: true, port, path: p.path };
     }
@@ -114,6 +123,8 @@ export async function ensureDesktop(config) {
     port = await freePort();
   }
   config.ports.desktop = port;
+  signal?.throwIfAborted();
+  await checkCancelled();
   // Desktop is intentionally visible because this action opens the user's interactive app.
   const child = spawn(
     path,
@@ -126,6 +137,8 @@ export async function ensureDesktop(config) {
 }
 export async function createShortcuts(root, dir) {
   if (process.platform !== "win32") return;
+  const active = await readActiveInstallation(dir, { fallbackRoot: root });
+  root = active.pointer?.bootstrapRoot || root;
   const quote = (s) => "'" + s.replaceAll("'", "''") + "'";
   const script = `$ErrorActionPreference='Stop';$shell=New-Object -ComObject WScript.Shell;$folder=Join-Path ([Environment]::GetFolderPath('Programs')) 'codex-phone';[IO.Directory]::CreateDirectory($folder)|Out-Null;foreach($entry in @(@('Codex Phone','start'),@('Codex Phone Pair','pair'))){$file=Join-Path $folder ($entry[0]+'.lnk');$exists=Test-Path -LiteralPath $file;$s=$shell.CreateShortcut($file);if($exists -and $s.Description -ne 'codex-phone managed companion'){throw 'SHORTCUT_OWNERSHIP_CONFLICT'};$s.TargetPath='wscript.exe';$s.Arguments='"'+${quote(root + "\\scripts\\launch.vbs")}+'" "'+${quote(root)}+'" "'+${quote(dir)}+'" '+$entry[1]+' "'+${quote(process.execPath)}+'"';$s.Description='codex-phone managed companion';$s.Save()}`;
   await powershell(script);

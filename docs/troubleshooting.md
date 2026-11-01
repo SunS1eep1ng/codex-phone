@@ -1,6 +1,10 @@
 # Troubleshooting
 
-Run `node dist/cli.mjs status --json`, then `doctor --json`. Inspect private `service.log` only locally. Do not post raw logs, pairing pages/configuration, tokens, project paths or conversation contents.
+Run `node scripts/manage.mjs status --json`, then `doctor --json`. Inspect private `service.log` only locally. Do not post raw logs, pairing pages/configuration, tokens, project paths or conversation contents.
+
+After an upgrade always use the stable `scripts/Manage.ps1` / `scripts/manage.mjs` entry: an old retained `dist/cli.mjs` is the rollback copy, not necessarily the active generation. Candidate preparation failure leaves the old service untouched; activation failure reports whether rollback really succeeded. `installation_rollback_failed` requires diagnosis and must not be described as recovered.
+
+The recovery notice never resends a prompt. If a write result is uncertain, check the native conversation before choosing whether to send again; use the explicit “I checked the computer record” action only after review. Drafts/attachments defer a refresh. A companion process watchdog does not keep an offline/asleep PC reachable or fix an incompatible Desktop API.
 
 | Symptom/code | Meaning and action |
 |---|---|
@@ -23,7 +27,7 @@ Run `node dist/cli.mjs status --json`, then `doctor --json`. Inspect private `se
 | Multiple app versions after Store update | Reuse an official running instance even if a newer package is registered; upgrade on the next normal exit. |
 | WebView errors on an old Android | Update the system WebView. No Google services are required, but a modern browser engine is. |
 
-Cloudflare recovery: the service restarts its owned cloudflared child and registers a new origin at the fixed Worker. KV changes may take roughly a minute to propagate. A worker cannot wake a sleeping/offline PC; keep the computer awake and the companion running. The current process supervises components, not its own crash or Windows logon. Reopen Codex Phone after stopping/crashing the companion.
+Cloudflare recovery: the service restarts its owned cloudflared child and registers a new origin at the fixed Worker. KV changes may take roughly a minute to propagate. A worker cannot wake a sleeping/offline PC; keep the computer awake and the companion running. The dedicated Codex Phone launcher also enables an independent companion supervisor. CLI users opt in with `start --supervise`. Explicit stop/uninstall creates an owned stop marker so the supervisor does not resurrect the service. Windows logon startup is not installed.
 
 Account authorization: use a fresh Wrangler login if a callback listener is gone. Missing `workers_scripts:write` is a Cloudflare authorization issue, not native Desktop failure. Never paste account tokens into a command body or public report. Check free-tier limits and provider availability before claiming zero-cost operation at arbitrary scale.
 

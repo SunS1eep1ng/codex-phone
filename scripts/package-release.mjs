@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const { version } = JSON.parse(
+  await readFile(join(root, "package.json"), "utf8"),
+);
 execFileSync(process.execPath, ["scripts/audit-publish.mjs"], {
   cwd: root,
   stdio: "inherit",
@@ -26,11 +29,14 @@ for (const file of files) {
 await cp(join(root, "dist"), join(stage, "dist"), { recursive: true });
 // The archive includes source and built UI, never node_modules, state or the signing key.
 await mkdir(join(root, "release"), { recursive: true });
-const archive = join(root, "release/codex-phone-v0.1.0-windows.zip");
+const archive = join(root, `release/codex-phone-v${version}-windows.zip`);
 execFileSync("tar", ["-a", "-cf", archive, "-C", stage, "."], {
   stdio: "inherit",
 });
-const artifacts = ["codex-phone-v0.1.0.apk", "codex-phone-v0.1.0-windows.zip"];
+const artifacts = [
+  `codex-phone-v${version}.apk`,
+  `codex-phone-v${version}-windows.zip`,
+];
 const sums = [];
 for (const file of artifacts)
   sums.push(

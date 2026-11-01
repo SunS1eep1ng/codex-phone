@@ -1,7 +1,6 @@
 import { Command } from "commander";
 import { open, writeFile, readFile, unlink, rm } from "node:fs/promises";
-import { join, resolve, sep, parse } from "node:path";
-import { homedir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import {
@@ -11,32 +10,79 @@ import {
   readJSON,
   httpsOrigin,
   PhoneError,
+  assertPrivateStateDirectory,
+  canonicalPath,
+  pathKey,
+  withFileLock,
 } from "./state.mjs";
+import { readActiveInstallation } from "../scripts/install-pointer.mjs";
+import { startSupervisor, stopSupervisor } from "./supervisor.mjs";
+import { installationPaths } from "../scripts/install-pointer.mjs";
+import {
+  prepareUninstallCleanup,
+  launchUninstallCleanup,
+} from "../scripts/uninstall-cleanup.mjs";
 import { serve, control } from "./service.mjs";
 import { createShortcuts, powershell } from "./windows.mjs";
 import { deployCloudflare, probeRelay } from "./relay.mjs";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const cli = new Command()
   .name("codex-phone")
-  .version("0.1.0")
+  .version(
+    (await readJSON(join(root, "package.json"), {})).version || "unknown",
+  )
   .option("--json", "Structured result")
   .option("--state <directory>", "Isolated private state directory");
+const jsonRequested = process.argv.includes("--json");
+cli.exitOverride().configureOutput({
+  writeErr: (text) => {
+    if (!jsonRequested) process.stderr.write(text);
+  },
+});
 let context;
+let forwarded = false;
+cli.hook("preAction", async (_program, command) => {
+  const dir = await assertPrivateStateDirectory(
+    resolve(cli.opts().state || stateRoot()),
+    { checkoutRoots: [root] },
+  );
+  const active = await readActiveInstallation(dir, { fallbackRoot: root });
+  if (
+    command.name() === "serve" ||
+    pathKey(await canonicalPath(active.root)) ===
+      pathKey(await canonicalPath(root))
+  )
+    return;
+  const exitCode = await new Promise((done, reject) => {
+    const child = spawn(
+      process.execPath,
+      [join(active.root, "dist/cli.mjs"), ...process.argv.slice(2)],
+      {
+        stdio: "inherit",
+        windowsHide: true,
+        env: { ...process.env, CODEX_PHONE_STATE: dir },
+      },
+    );
+    child.once("error", reject);
+    child.once("close", (code) => done(code ?? 1));
+  });
+  forwarded = true;
+  process.exitCode = exitCode;
+  throw Object.assign(new Error("command_forwarded"), { forwarded: true });
+});
 async function ctx() {
   if (context) return context;
-  const dir = resolve(cli.opts().state || stateRoot());
-  if (
-    dir === parse(dir).root ||
-    dir === homedir() ||
-    dir === root ||
-    dir.startsWith(root + sep)
-  )
-    throw new PhoneError(
-      "unsafe_state_directory",
-      "Use a dedicated private directory outside the checkout.",
-    );
-  const config = await setupState(dir);
-  context = { dir, config };
+  const dir = await assertPrivateStateDirectory(
+    resolve(cli.opts().state || stateRoot()),
+    { checkoutRoots: [root] },
+  );
+  const active = await readActiveInstallation(dir, { fallbackRoot: root });
+  const checkoutRoots = [
+    root,
+    ...(active.pointer?.bootstrapRoot ? [active.pointer.bootstrapRoot] : []),
+  ];
+  const config = await setupState(dir, { checkoutRoots });
+  context = { dir, config, installation: active };
   return context;
 }
 function output(value) {
@@ -64,6 +110,15 @@ async function start() {
   } catch (e) {
     if (e.code && e.code !== "service_not_running") throw e;
   }
+  if (
+    process.env.CODEX_PHONE_SUPERVISOR_START === "1" &&
+    (await readJSON(join(dir, "supervisor-stop.json"), null))?.deviceId ===
+      config.deviceId
+  )
+    throw new PhoneError(
+      "service_stopped_by_user",
+      "The supervisor must not restart a service explicitly stopped by the user.",
+    );
   const logs = await open(join(dir, "service.log"), "a", 0o600);
   const child = spawn(
     process.execPath,
@@ -110,6 +165,15 @@ async function requireStopped(config) {
   );
 }
 async function stopOwned(config) {
+  const { dir } = await ctx();
+  await stopSupervisor(dir);
+  const latest = await readJSON(join(dir, "config.json"), null);
+  if (latest?.deviceId !== config.deviceId)
+    throw new PhoneError(
+      "state_ownership_changed",
+      "Installation identity changed while stopping; no stop request was sent.",
+    );
+  config = latest;
   try {
     await control(config, "stop", {});
   } catch (e) {
@@ -154,7 +218,8 @@ cli
         throw Error("INVALID_PROXY");
       config.proxy = url.origin;
     }
-    await saveJSON(join(dir, "config.json"), config);
+    if (options.endpoint || options.proxy)
+      await saveJSON(join(dir, "config.json"), config);
     if (options.shortcuts) await createShortcuts(root, dir);
     output({
       ok: true,
@@ -169,8 +234,13 @@ cli
 cli
   .command("start")
   .option("--open")
+  .option("--supervise", "Recover this companion after a service process exits")
   .action(async (options) => {
     let result = await start();
+    if (options.supervise) {
+      const { dir } = await ctx();
+      await startSupervisor(dir, root);
+    }
     if (options.open) {
       const { config } = await ctx();
       for (
@@ -253,38 +323,56 @@ cli.command("stop").action(async () => {
   output({ ok: true });
 });
 cli.command("uninstall").action(async () => {
-  const { config, dir } = await ctx();
-  await stopOwned(config);
-  if (process.platform === "win32")
-    await powershell(
-      `$f=Join-Path ([Environment]::GetFolderPath('Programs')) 'codex-phone';$s=New-Object -ComObject WScript.Shell;$stateArg='"'+${"'" + dir.replaceAll("'", "''") + "'"}+'"';if(Test-Path -LiteralPath $f){Get-ChildItem -LiteralPath $f -Filter '*.lnk'|ForEach-Object {$link=$s.CreateShortcut($_.FullName);if($link.Description -eq 'codex-phone managed companion' -and $link.Arguments.Contains($stateArg)){Remove-Item -LiteralPath $_.FullName}}}`,
-    );
-  const loaded = await readJSON(join(dir, "config.json"), null);
-  if (loaded?.deviceId !== config.deviceId)
-    throw Error("STATE_OWNERSHIP_CHANGED");
-  for (const name of [
-    "config.json",
-    "phones.json",
-    "runtime.json",
-    "service.lock",
-    "pairing.html",
-    "service.log",
-    "cloudflared.log",
-  ])
-    await unlink(join(dir, name)).catch((e) => {
-      if (e.code !== "ENOENT") throw e;
+  const { config, dir, installation } = await ctx();
+  const paths = installationPaths(dir);
+  return withFileLock(paths.lock, async () => {
+    await stopOwned(config);
+    const loaded = await readJSON(join(dir, "config.json"), null);
+    if (loaded?.deviceId !== config.deviceId)
+      throw Error("STATE_OWNERSHIP_CHANGED");
+    const cleanup = await prepareUninstallCleanup(dir, config.deviceId, {
+      bootstrapRoot: installation.pointer?.bootstrapRoot || root,
+      sourceFile: join(root, "scripts/uninstall-cleanup.mjs"),
     });
-  for (const name of ["bin", "cloudflare", "upstream-state"]) {
-    const target = resolve(dir, name);
-    if (!target.startsWith(dir + sep)) throw Error("UNSAFE_UNINSTALL_PATH");
-    await rm(target, { recursive: true, force: true });
-  }
-  output({
-    ok: true,
-    cloudResourcesRetained: true,
-    next: [
-      "Cloudflare resources remain in your account; no cloud deletion was performed.",
-    ],
+    if (process.platform === "win32")
+      await powershell(
+        `$f=Join-Path ([Environment]::GetFolderPath('Programs')) 'codex-phone';$s=New-Object -ComObject WScript.Shell;$stateArg='"'+${"'" + dir.replaceAll("'", "''") + "'"}+'"';if(Test-Path -LiteralPath $f){Get-ChildItem -LiteralPath $f -Filter '*.lnk'|ForEach-Object {$link=$s.CreateShortcut($_.FullName);if($link.Description -eq 'codex-phone managed companion' -and $link.Arguments.Contains($stateArg)){Remove-Item -LiteralPath $_.FullName}}}`,
+      );
+    for (const name of [
+      "config.json",
+      "phones.json",
+      "runtime.json",
+      "service.lock",
+      "pairing.html",
+      "service.log",
+      "cloudflared.log",
+      "operations.json",
+      "supervisor.json",
+      "supervisor-stop.json",
+      "supervisor.log",
+    ])
+      await unlink(join(dir, name)).catch((e) => {
+        if (e.code !== "ENOENT") throw e;
+      });
+    for (const name of ["bin", "cloudflare", "upstream-state"]) {
+      const target = resolve(dir, name);
+      if (!target.startsWith(dir + sep)) throw Error("UNSAFE_UNINSTALL_PATH");
+      await rm(target, { recursive: true, force: true });
+    }
+    for (const file of [paths.active, paths.transaction])
+      await unlink(file).catch((error) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+    await launchUninstallCleanup(cleanup);
+    output({
+      ok: true,
+      cleanupScheduled: true,
+      cleanupResultFile: cleanup.resultFile,
+      cloudResourcesRetained: true,
+      next: [
+        "Cloudflare resources remain in your account; no cloud deletion was performed.",
+      ],
+    });
   });
 });
 const relay = cli.command("relay");
@@ -304,12 +392,30 @@ cf.command("deploy")
 try {
   await cli.parseAsync();
 } catch (e) {
-  output({
-    ok: false,
-    status: "error",
-    code: e.code || "operation_failed",
-    message: e.message,
-    next: e.next || [],
-  });
-  process.exitCode = 1;
+  if (forwarded || e.forwarded) {
+  } else if (e.code?.startsWith("commander.") && e.exitCode === 0)
+    process.exitCode = 0;
+  else {
+    const parserCodes = {
+      "commander.unknownCommand": "cli_invalid_command",
+      "commander.missingArgument": "cli_missing_argument",
+      "commander.unknownOption": "cli_invalid_option",
+      "commander.optionMissingArgument": "cli_missing_option_value",
+      "commander.missingMandatoryOptionValue": "cli_missing_option_value",
+    };
+    output({
+      ok: false,
+      status: "error",
+      code: parserCodes[e.code] || e.code || "operation_failed",
+      message: e.message,
+      next:
+        e.next ||
+        (e.code?.startsWith("commander.")
+          ? [
+              "Run codex-phone --help to see valid commands and required arguments.",
+            ]
+          : []),
+    });
+    process.exitCode = 1;
+  }
 }

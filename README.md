@@ -4,7 +4,7 @@
 
 Continue an **existing Codex Desktop conversation from an Android phone**, then return to the same conversation on your computer. Execution, tools, files and account login remain on the computer. The phone is a paired client of your own installation; it does not sign in to ChatGPT.
 
-This is an **unofficial, self-hosted companion**, not an OpenAI product. It uses an internal Desktop interface, which can change between releases. v0.1.0 is a prerelease; check the [compatibility and acceptance record](docs/compatibility.md) before installing. A running relay or an open port does not prove native conversations work.
+This is an **unofficial, self-hosted companion**, not an OpenAI product. It uses an internal Desktop interface, which can change between releases. This is an experimental prerelease; check the [compatibility and acceptance record](docs/compatibility.md) before installing. A running relay or an open port does not prove native conversations work.
 
 ## What it provides
 
@@ -55,7 +55,7 @@ Setup creates only dedicated **Codex Phone** and **Codex Phone Pair** Start-menu
 ```powershell
 npx wrangler login
 npx wrangler whoami
-node dist/cli.mjs relay cloudflare deploy --account YOUR_ACCOUNT_ID
+node scripts/manage.mjs relay cloudflare deploy --account YOUR_ACCOUNT_ID
 ```
 
 Deployment creates your own Worker and KV namespace; secrets/configuration are generated in private state. A managed cloudflared Quick Tunnel publishes the authenticated gateway, and the Worker stores its current origin. The fixed Worker address stays the same after tunnel rotation. Quick Tunnels have no availability guarantee; do not assume a production SLA. [Cloudflare details](docs/relay.md).
@@ -63,7 +63,7 @@ Deployment creates your own Worker and KV namespace; secrets/configuration are g
 **Existing HTTPS relay** — configure an HTTPS origin that forwards HTTP and WSS to the gateway's saved loopback port:
 
 ```powershell
-node dist/cli.mjs setup --endpoint https://YOUR_GATEWAY
+node scripts/manage.mjs setup --endpoint https://YOUR_GATEWAY
 ```
 
 The external reverse proxy is maintained by you. It must forward cookies, WebSocket upgrades and errors without caching; do not expose the control/CDP ports. An [nginx example and interface contract](docs/relay.md) are provided.
@@ -71,12 +71,12 @@ The external reverse proxy is maintained by you. It must forward cookies, WebSoc
 ### Start, diagnose, pair
 
 ```powershell
-node dist/cli.mjs start
-node dist/cli.mjs doctor --json
-node dist/cli.mjs pair --open
+node scripts/manage.mjs start
+node scripts/manage.mjs doctor --json
+node scripts/manage.mjs pair --open
 ```
 
-If Desktop is already running without its debugging interface, **exit it normally once, including the tray icon**. The companion waits and reopens the official app. Never force-close it or reopen it manually during this handoff. Subsequent launches through **Codex Phone** reuse the running instance; the companion recovers components while it remains running. Starting the original official shortcut after stopping everything may require another normal exit. Windows logon startup is not installed.
+If Desktop is already running without its debugging interface, **exit it normally once, including the tray icon**. The companion waits and reopens the official app. Never force-close it or reopen it manually during this handoff. Subsequent launches through **Codex Phone** reuse the running instance; the companion recovers components while it remains running. The dedicated Start-menu entry also starts a separate, owned supervisor that recovers the companion process; explicit stop/uninstall disables it. Starting the original official shortcut after stopping everything may require another normal exit. Windows logon startup is not installed.
 
 Download the signed APK and its SHA-256 file from [Releases](https://github.com/SunS1eep1ng/codex-phone/releases). Verify the checksum, install, then enter your gateway address and the 8-digit code from the private pairing page, or paste its pairing link. Codes expire after 10 minutes and work once. Never share the page or its code. The public app ID is `io.github.suns1eep1ng.codexphone`; development builds use `.dev`.
 
@@ -85,20 +85,20 @@ On the phone, open an existing conversation and send a harmless test message. Co
 ## Manage
 
 ```powershell
-node dist/cli.mjs status --json
-node dist/cli.mjs doctor --json
-node dist/cli.mjs phones list --json
-node dist/cli.mjs phones revoke PHONE_ID
-node dist/cli.mjs relay check --json
-node dist/cli.mjs stop
-node dist/cli.mjs uninstall
+node scripts/manage.mjs status --json
+node scripts/manage.mjs doctor --json
+node scripts/manage.mjs phones list --json
+node scripts/manage.mjs phones revoke PHONE_ID
+node scripts/manage.mjs relay check --json
+node scripts/manage.mjs stop
+node scripts/manage.mjs uninstall
 ```
 
-Results contain `status` (`ok`, `needs_user_action`, `error`), `code`, and relevant `next` actions. Exit codes are 0, 2, 1 respectively. `start` confirms the service started; **doctor** separately checks a real native `thread/list`, relay identity and anonymous HTTP/WSS rejection. Pair output is sensitive even in JSON.
+Results contain `status` (`ok`, `needs_user_action`, `error`), `code`, and relevant `next` actions. Exit codes are 0, 2, 1 respectively. `start` confirms the service started; `start --supervise` also enables recovery of this companion process (never force-closing Desktop); **doctor** separately checks a real native `thread/list`, relay identity and anonymous HTTP/WSS rejection. Pair output is sensitive even in JSON.
 
 An optional process-local proxy can be set with `setup --proxy http://YOUR_PROXY:PORT`. No proxy address, system setting or DNS change is supplied by default. After changing configuration, use `stop` then `start` to load it.
 
-Upgrade: `stop`, update the checkout, run `scripts/Update.ps1`, then `doctor`. Your state, device identity and authorized phones are retained. Uninstall stops owned local components and removes owned shortcuts/state; cloud resources are a separate explicit deletion. To change computers, deploy again and pair again; migrate Desktop conversations and project files separately.
+Upgrade: update the bootstrap checkout, run `scripts/Update.ps1`, then `doctor`. Candidate dependencies/build/tests are prepared in a separate generation before stopping the old service. Failed activation restores the last known good generation. Use `scripts/Manage.ps1` or `node scripts/manage.mjs` to follow the active generation; keep the bootstrap checkout in place. Your state, device identity and authorized phones are retained. Uninstall stops owned local components and removes owned shortcuts/state; cloud resources are a separate explicit deletion. To change computers, deploy again and pair again; migrate Desktop conversations and project files separately.
 
 ## Build and verify
 

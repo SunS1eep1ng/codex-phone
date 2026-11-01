@@ -32,6 +32,20 @@ The public info endpoint exposes the installation's device ID and display name. 
 
 公开 info 接口含设备 ID 和显示名称。本项目不新增统计遥测；复用界面可能含上游链接／资源／集成，未支持的 API 已限制，但这不代表对全部第三方代码完成了全面审计。
 
+## Recovery and installation generations / 恢复与安装代
+
+The authenticated `/phone-api/recovery` probe exposes a stable service/native epoch and unresolved operation metadata. Full recovery obtains the native thread and approval snapshot before refreshing the existing UI. A document identifier associates an event-stream gap with its page; a new page does not inherit a late close from an older document. Drafts and selected attachments defer refresh. The identifier is not authentication. Multiple tabs share the origin cookie, so explicit multi-tab stream association remains outside the first single-WebView scope.
+
+The journal stores only operation IDs, methods, thread/turn IDs, input hashes and outcome states. Interrupted pending writes become uncertain after restart. Neither reconnect nor the supervisor replays them. A user can acknowledge an uncertain record only after checking the conversation; acknowledging is not executing or declaring the native task completed.
+
+Admin control protocol v2 signs both requests and responses with nonce-bound HMAC. The raw admin secret is not placed in request headers. A valid port/JSON response is insufficient to identify the service. Existing v0.1.0 upgrades stop the old service with its retained old CLI before switching; do not overwrite its dependencies or CLI first.
+
+Installers prepare immutable code generations under private `install/generations`, then switch a validated active pointer. Interrupted activation chooses the previous verified generation; failed activation restores it. The bootstrap checkout hosts the stable launcher/management entry and must remain available. Uninstall removes pointers immediately and schedules bounded cleanup of marker-verified generations after its parent exits; it never removes arbitrary source directories.
+
+The dedicated launcher enables an external supervisor for the companion. It recovers a dead companion with bounded retry delays and does not force-close native Desktop. Explicit stop/uninstall inhibits recovery. Quick Tunnels remain a testing-oriented provider without an uptime guarantee or SSE support; recovery uses WSS plus authoritative snapshots. No new cloud provider or iOS client is included in this patch.
+
+恢复探测区分原生读取、Agent 握手与页面事件断档，真正恢复时再取历史／审批快照。草稿和附件会延迟刷新。操作日志不存 prompt，未知结果由用户核对，不能自动重发。管理接口使用双向 HMAC；升级保留旧代，候选通过准备再切换；卸载的代目录清理由退出后助手验证归属后有界执行。独立守护只恢复本项目后台，主动停止会抑制恢复，不强制关闭原生桌面。
+
 ## Migration / 迁移
 
 Source and APK are reusable. Private identity, phone authorizations and cloud resources belong to an installation. On a new PC: install/sign in to official Desktop, move its conversations/projects through an appropriate separate process, deploy codex-phone with a new state directory, configure your own relay, and re-pair the phone. Do not copy another person's state or signer. Keep your release signing key backed up separately if you maintain the APK, because Android updates require the same signer.

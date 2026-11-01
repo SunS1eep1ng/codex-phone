@@ -109,7 +109,7 @@ export class PhoneAuth {
       token,
     };
   }
-  authorized(req) {
+  authorization(req) {
     const value = /(?:^|;\s*)bridge_phone_session=([^;]+)/.exec(
       req.headers.cookie || "",
     )?.[1];
@@ -118,12 +118,16 @@ export class PhoneAuth {
       (s) => s.expiresAt > this.now() && equal(s.hash, hash(value)),
     );
     if (!s) return null;
-    return (
-      this.data.phones.find(
-        (p) =>
-          p.phoneId === s.phoneId && !p.revokedAt && p.expiresAt > this.now(),
-      ) || null
+    const phone = this.data.phones.find(
+      (p) =>
+        p.phoneId === s.phoneId && !p.revokedAt && p.expiresAt > this.now(),
     );
+    return phone
+      ? { phone, session: s, expiresAt: Math.min(phone.expiresAt, s.expiresAt) }
+      : null;
+  }
+  authorized(req) {
+    return this.authorization(req)?.phone || null;
   }
   list() {
     return this.data.phones.map(({ credentialHash, ...p }) => p);

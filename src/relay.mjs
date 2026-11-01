@@ -134,124 +134,299 @@ export class ProvidedRelay {
   }
 }
 export class CloudflareRelay {
-  constructor(config, dir) {
+  constructor(config, dir, dependencies = {}) {
     this.config = config;
     this.dir = dir;
+    this.dependencies = {
+      download: downloadVerified,
+      spawnProcess: spawn,
+      register: remoteFetch,
+      readLog: readFile,
+      writeLog: writeFile,
+      setInterval,
+      clearInterval,
+      platform: process.platform,
+      arch: process.arch,
+      monitorIntervalMs: 4000,
+      stopTimeoutMs: 1500,
+      probe: probeRelay,
+      ...dependencies,
+    };
     this.child = null;
     this.origin = "";
     this.stopped = false;
     this.error = null;
+    this.timer = null;
+    this.starting = null;
+    this.stopping = null;
+    this.generation = 0;
+    this.epoch = (config.deviceId || "local") + ":tunnel:0";
+    this.registration = null;
+    this.startAbort = null;
+    this.logfile = join(dir, "cloudflared.log");
+  }
+  current(generation, child) {
+    return (
+      !this.stopped &&
+      generation === this.generation &&
+      (!child || this.child === child)
+    );
+  }
+  ensureMonitor() {
+    if (this.timer !== null) return;
+    this.timer = this.dependencies.setInterval(() => {
+      if (this.stopped) return;
+      const work = this.child
+        ? this.tick(this.logfile, this.generation)
+        : this.start();
+      void work.catch((error) => {
+        if (!this.stopped) this.error = error.message;
+      });
+    }, this.dependencies.monitorIntervalMs);
+    this.timer.unref?.();
   }
   async start() {
+    if (this.stopping)
+      throw new PhoneError(
+        "relay_stopping",
+        "Relay is still stopping; retry after it stops.",
+      );
     if (this.starting) return this.starting;
     if (this.child) return;
-    this.starting = this.startInner();
-    try {
-      return await this.starting;
-    } finally {
-      this.starting = null;
-    }
-  }
-  async startInner() {
-    this.stopped = false;
     const cf = this.config.relay;
     if (!cf.registrationSecret || !cf.endpoint)
       throw new PhoneError("cloudflare_not_deployed");
-    if (process.platform !== "win32" || process.arch !== "x64")
+    if (
+      this.dependencies.platform !== "win32" ||
+      this.dependencies.arch !== "x64"
+    )
       throw new PhoneError("unsupported_tunnel_platform");
-    const exe = await downloadVerified(
+    this.stopped = false;
+    this.ensureMonitor();
+    const generation = ++this.generation;
+    this.epoch = (this.config.deviceId || "local") + ":tunnel:" + generation;
+    this.origin = "";
+    this.startAbort = new AbortController();
+    const promise = this.startInner(generation, this.startAbort.signal);
+    this.starting = promise;
+    try {
+      return await promise;
+    } catch (error) {
+      if (this.current(generation)) {
+        this.error = error.message;
+        throw error;
+      }
+    } finally {
+      if (this.starting === promise) {
+        this.starting = null;
+        this.startAbort = null;
+      }
+    }
+  }
+  async startInner(generation, signal) {
+    const exe = await this.dependencies.download(
       lock.cloudflared["windows-x64"],
       join(this.dir, "bin/cloudflared.exe"),
+      { signal },
     );
-    const logfile = join(this.dir, "cloudflared.log");
-    await writeFile(logfile, "");
+    if (!this.current(generation) || signal.aborted) return;
+    await this.dependencies.writeLog(this.logfile, "");
+    if (!this.current(generation) || signal.aborted) return;
     const env = {
       ...process.env,
       ...(this.config.proxy
         ? { HTTP_PROXY: this.config.proxy, HTTPS_PROXY: this.config.proxy }
         : {}),
     };
-    if (this.stopped) return;
-    const child = spawn(
+    const child = this.dependencies.spawnProcess(
       exe,
       [
         "tunnel",
         "--no-autoupdate",
         "--logfile",
-        logfile,
+        this.logfile,
         "--url",
         `http://127.0.0.1:${this.config.ports.gateway}`,
       ],
       { stdio: "ignore", windowsHide: true, env },
     );
     this.child = child;
-    child.on("error", (e) => {
-      this.error = e.message;
-      if (this.child === child) this.child = null;
-    });
-    child.on("exit", () => {
-      if (this.child === child) this.child = null;
-    });
-    this.timer = setInterval(
-      () =>
-        void this.tick(logfile).catch((e) => {
-          this.error = e.message;
-        }),
-      4000,
-    );
-    await this.tick(logfile);
+    this.error = null;
+    const lost = (error) => {
+      if (!this.current(generation, child)) return;
+      this.child = null;
+      this.origin = "";
+      this.error =
+        error?.message || "Tunnel child exited; waiting for recovery.";
+      ++this.generation;
+      this.epoch =
+        (this.config.deviceId || "local") + ":tunnel:" + this.generation;
+      this.startAbort?.abort();
+      this.startAbort = null;
+      this.starting = null;
+      this.registration?.controller.abort();
+      this.registration = null;
+    };
+    child.on("error", lost);
+    child.on("exit", () => lost());
+    await this.tick(this.logfile, generation);
   }
-  async tick(logfile) {
-    if (this.stopped) return;
-    if (!this.child) {
-      clearInterval(this.timer);
-      return this.start();
-    }
-    const text = await readFile(logfile, "utf8").catch(() => "");
-    const origins = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g);
-    const origin = origins?.at(-1);
-    if (!origin) return;
-    if (origin === this.origin) return;
-    if (this.registering) return;
-    this.registering = true;
+  async tick(logfile = this.logfile, generation = this.generation) {
+    if (!this.current(generation)) return;
+    if (!this.child) return this.start();
+    const child = this.child;
+    let text;
     try {
-      const response = await remoteFetch(
-        this.config.relay.endpoint + "/_bridge/register",
-        {
-          method: "POST",
-          headers: {
-            authorization: "Bearer " + this.config.relay.registrationSecret,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ deviceId: this.config.deviceId, origin }),
-          signal: AbortSignal.timeout(10000),
-        },
-        this.config.proxy,
-      );
-      if (!response.ok)
-        throw Error("TUNNEL_REGISTRATION_FAILED: " + response.status);
-      this.origin = origin;
-      this.error = null;
-    } finally {
-      this.registering = false;
+      text = await this.dependencies.readLog(logfile, "utf8");
+    } catch (error) {
+      if (this.current(generation, child))
+        this.error = "TUNNEL_LOG_READ_FAILED: " + error.code;
+      return;
     }
+    if (!this.current(generation, child)) return;
+    const origin = String(text || "")
+      .match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g)
+      ?.at(-1);
+    if (!origin || origin === this.origin) return;
+    if (this.registration?.generation === generation)
+      return this.registration.promise;
+    const registration = {
+      generation,
+      controller: new AbortController(),
+      promise: null,
+    };
+    this.registration = registration;
+    registration.promise = (async () => {
+      try {
+        const response = await this.dependencies.register(
+          this.config.relay.endpoint + "/_bridge/register",
+          {
+            method: "POST",
+            headers: {
+              authorization: "Bearer " + this.config.relay.registrationSecret,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ deviceId: this.config.deviceId, origin }),
+            signal: AbortSignal.any([
+              registration.controller.signal,
+              AbortSignal.timeout(10000),
+            ]),
+          },
+          this.config.proxy,
+        );
+        if (
+          !this.current(generation, child) ||
+          registration.controller.signal.aborted
+        )
+          return;
+        if (!response.ok)
+          throw Error("TUNNEL_REGISTRATION_FAILED: " + response.status);
+        this.origin = origin;
+        this.error = null;
+      } catch (error) {
+        if (
+          this.current(generation, child) &&
+          !registration.controller.signal.aborted
+        ) {
+          this.error = error.message;
+          throw error;
+        }
+      } finally {
+        if (this.registration === registration) this.registration = null;
+      }
+    })();
+    return registration.promise;
+  }
+  async stopChild(child) {
+    if (!child) return;
+    await new Promise((resolve) => {
+      let timer,
+        finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        child.off?.("exit", done);
+        child.off?.("close", done);
+        resolve();
+      };
+      child.once?.("exit", done);
+      child.once?.("close", done);
+      timer = setTimeout(() => {
+        try {
+          if (child.kill("SIGKILL") === false && child.exitCode === null)
+            this.error =
+              "TUNNEL_STOP_FAILED: owned child did not acknowledge termination.";
+        } catch (error) {
+          this.error = "TUNNEL_STOP_FAILED: " + error.message;
+        }
+        done();
+      }, this.dependencies.stopTimeoutMs);
+      try {
+        if (child.exitCode !== null && child.exitCode !== undefined) done();
+        else child.kill();
+      } catch (error) {
+        this.error = "TUNNEL_STOP_FAILED: " + error.message;
+        done();
+      }
+    });
   }
   async stop() {
+    if (this.stopping) return this.stopping;
     this.stopped = true;
-    clearInterval(this.timer);
-    this.child?.kill();
+    ++this.generation;
+    this.epoch =
+      (this.config.deviceId || "local") + ":tunnel:" + this.generation;
+    if (this.timer !== null) this.dependencies.clearInterval(this.timer);
+    this.timer = null;
+    const pending = this.starting;
+    this.starting = null;
+    this.startAbort?.abort();
+    this.startAbort = null;
+    const registration = this.registration;
+    this.registration = null;
+    registration?.controller.abort();
+    const child = this.child;
     this.child = null;
+    this.origin = "";
+    const waitBounded = (promise) => {
+      let timer;
+      return Promise.race([
+        Promise.resolve(promise).catch(() => {}),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, this.dependencies.stopTimeoutMs);
+        }),
+      ]).finally(() => clearTimeout(timer));
+    };
+    const stopping = (async () => {
+      await this.stopChild(child);
+      await Promise.all([
+        waitBounded(pending),
+        waitBounded(registration?.promise),
+      ]);
+    })();
+    this.stopping = stopping;
+    try {
+      await stopping;
+    } finally {
+      if (this.stopping === stopping) this.stopping = null;
+    }
   }
   async health() {
+    const result = await this.dependencies.probe(this.config);
+    const registered = !!this.child && !!this.origin;
     return {
-      ...(await probeRelay(this.config)),
+      ...result,
+      ok: result.ok && registered,
       provider: "cloudflare",
       tunnelProcess: !!this.child,
-      registered: !!this.origin,
+      registered,
       error: this.error,
+      epoch: this.epoch,
     };
   }
 }
+
 export function runTool(
   executable,
   args,

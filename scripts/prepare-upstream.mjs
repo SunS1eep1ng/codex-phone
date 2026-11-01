@@ -1,6 +1,14 @@
-import { mkdir, readFile, writeFile, cp, access } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { resolve, join } from "node:path";
+import {
+  mkdir,
+  readFile,
+  writeFile,
+  cp,
+  access,
+  unlink,
+  rename,
+} from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { resolve, join, basename } from "node:path";
 import { execFileSync, execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -8,7 +16,8 @@ export const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 export const lock = JSON.parse(
   await readFile(join(root, "upstream.lock.json"), "utf8"),
 );
-export async function downloadVerified(asset, destination) {
+export async function downloadVerified(asset, destination, { signal } = {}) {
+  signal?.throwIfAborted();
   await mkdir(resolve(destination, ".."), { recursive: true });
   let bytes;
   try {
@@ -18,29 +27,42 @@ export async function downloadVerified(asset, destination) {
     !bytes ||
     createHash("sha256").update(bytes).digest("hex") !== asset.sha256
   ) {
-    const temporary = destination + ".download";
-    // curl honors process-local HTTPS_PROXY, supports redirects, and fails on HTTP errors.
-    await promisify(execFile)(
-      process.platform === "win32" ? "curl.exe" : "curl",
-      [
-        "-fL",
-        "--retry",
-        "3",
-        "--connect-timeout",
-        "20",
-        "--max-time",
-        "600",
-        "-o",
-        temporary,
-        asset.url,
-      ],
-      { windowsHide: true, timeout: 650000, maxBuffer: 2 * 1024 * 1024 },
-    );
-    bytes = await readFile(temporary);
-    if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
-      throw Error("CHECKSUM_MISMATCH: " + asset.url);
-    await writeFile(destination, bytes);
+    const temporary = destination + "." + randomUUID() + ".download";
+    try {
+      // curl honors process-local HTTPS_PROXY, supports redirects, and fails on HTTP errors.
+      await promisify(execFile)(
+        process.platform === "win32" ? "curl.exe" : "curl",
+        [
+          "-fL",
+          "--retry",
+          "3",
+          "--connect-timeout",
+          "20",
+          "--max-time",
+          "600",
+          "-o",
+          temporary,
+          asset.url,
+        ],
+        {
+          windowsHide: true,
+          timeout: 650000,
+          maxBuffer: 2 * 1024 * 1024,
+          signal,
+        },
+      );
+      bytes = await readFile(temporary);
+      if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
+        throw Error("CHECKSUM_MISMATCH: " + asset.url);
+      signal?.throwIfAborted();
+      await rename(temporary, destination);
+    } finally {
+      await unlink(temporary).catch((e) => {
+        if (e.code !== "ENOENT") throw e;
+      });
+    }
   }
+  signal?.throwIfAborted();
   return destination;
 }
 export async function prepare() {
@@ -74,4 +96,8 @@ export async function prepare() {
   execFileSync("tar", ["-xf", web, "-C", webDir]);
   return { sourceDir, webDir };
 }
-if (process.argv[1] === fileURLToPath(import.meta.url)) await prepare();
+if (
+  basename(fileURLToPath(import.meta.url)) === "prepare-upstream.mjs" &&
+  process.argv[1] === fileURLToPath(import.meta.url)
+)
+  await prepare();

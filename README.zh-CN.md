@@ -4,7 +4,7 @@
 
 在 Android 手机上继续**电脑官方 Codex 桌面应用中的已有会话**，回到电脑后继续同一条记录。执行、工具、项目文件和账号登录仍由电脑负责。手机配对的是你自己部署的接入层，无需登录 ChatGPT。
 
-这是**非官方、自行部署的配套工具**，与 OpenAI 没有官方关联。它依赖可能随更新变化的桌面内部接口。v0.1.0 为预发行版，安装前请看[兼容与验收记录](docs/compatibility.md)。中转可达或端口打开，均不代表原生会话已经可用。
+这是**非官方、自行部署的配套工具**，与 OpenAI 没有官方关联。它依赖可能随更新变化的桌面内部接口。本项目仍为实验性预发行版，安装前请看[兼容与验收记录](docs/compatibility.md)。中转可达或端口打开，均不代表原生会话已经可用。
 
 ## 首版能力
 
@@ -55,7 +55,7 @@ Set-Location codex-phone
 ```powershell
 npx wrangler login
 npx wrangler whoami
-node dist/cli.mjs relay cloudflare deploy --account YOUR_ACCOUNT_ID
+node scripts/manage.mjs relay cloudflare deploy --account YOUR_ACCOUNT_ID
 ```
 
 命令创建属于你的 Worker 与 KV，配置和密钥写入私有状态目录。本项目管理的 cloudflared Quick Tunnel 只连接认证网关，Worker 保存最新隧道地址，因此隧道换址后手机仍使用同一个 Worker 入口。Quick Tunnel 没有可用性保证，不能视作生产 SLA。详见[中转指南](docs/relay.md)。
@@ -63,7 +63,7 @@ node dist/cli.mjs relay cloudflare deploy --account YOUR_ACCOUNT_ID
 **已有 HTTPS 中转**：把支持 HTTP／WSS 的反向代理指向配置里保存的网关回环端口，然后设置入口：
 
 ```powershell
-node dist/cli.mjs setup --endpoint https://YOUR_GATEWAY
+node scripts/manage.mjs setup --endpoint https://YOUR_GATEWAY
 ```
 
 服务器由用户自行维护。它必须保留 Cookie、支持 WebSocket Upgrade、传递错误并禁止缓存；不要暴露管理或 CDP 端口。[接口与 nginx 示例](docs/relay.md)给出了具体约束。
@@ -71,12 +71,12 @@ node dist/cli.mjs setup --endpoint https://YOUR_GATEWAY
 ### 启动、诊断和配对
 
 ```powershell
-node dist/cli.mjs start
-node dist/cli.mjs doctor --json
-node dist/cli.mjs pair --open
+node scripts/manage.mjs start
+node scripts/manage.mjs doctor --json
+node scripts/manage.mjs pair --open
 ```
 
-如果桌面应用已运行但没启用调试接口，需要**正常退出一次，包括托盘图标**。后台会等待并自动重新打开官方应用，请不要强制结束进程或在交接时手动抢先打开。之后通过 **Codex Phone** 启动会复用已有实例，并在后台运行期间恢复相关组件。完全停止后若使用原始官方入口启动，可能需要再次正常退出。首版没有安装 Windows 登录自启动。
+如果桌面应用已运行但没启用调试接口，需要**正常退出一次，包括托盘图标**。后台会等待并自动重新打开官方应用，请不要强制结束进程或在交接时手动抢先打开。之后通过 **Codex Phone** 启动会复用已有实例，并在后台运行期间恢复相关组件。专用开始菜单入口还会启动独立守护进程，在接入层意外退出后恢复它；主动 stop／uninstall 会停用守护。完全停止后若使用原始官方入口启动，可能需要再次正常退出。首版没有安装 Windows 登录自启动。
 
 从 [Releases](https://github.com/SunS1eep1ng/codex-phone/releases) 下载签名 APK 与 SHA-256 文件，核验后安装。输入配对页的入口地址和 8 位码，或粘贴配对链接。配对码 10 分钟有效、仅用一次，请勿分享配对页。公开版包名为 `io.github.suns1eep1ng.codexphone`，开发版使用 `.dev`。
 
@@ -85,20 +85,20 @@ node dist/cli.mjs pair --open
 ## 日常管理
 
 ```powershell
-node dist/cli.mjs status --json
-node dist/cli.mjs doctor --json
-node dist/cli.mjs phones list --json
-node dist/cli.mjs phones revoke PHONE_ID
-node dist/cli.mjs relay check --json
-node dist/cli.mjs stop
-node dist/cli.mjs uninstall
+node scripts/manage.mjs status --json
+node scripts/manage.mjs doctor --json
+node scripts/manage.mjs phones list --json
+node scripts/manage.mjs phones revoke PHONE_ID
+node scripts/manage.mjs relay check --json
+node scripts/manage.mjs stop
+node scripts/manage.mjs uninstall
 ```
 
-结果含 `status`（`ok`、`needs_user_action`、`error`）、`code` 及相关 `next` 操作；退出码依次为 0、2、1。`start` 表示后台服务启动，**doctor** 才分别验证真实原生 `thread/list`、中转身份、匿名 HTTP／WSS 拒绝。配对命令的 JSON 也含敏感信息。
+结果含 `status`（`ok`、`needs_user_action`、`error`）、`code` 及相关 `next` 操作；退出码依次为 0、2、1。`start` 表示后台服务启动，`start --supervise` 另启接入层进程恢复（不强制重启桌面应用），**doctor** 才分别验证真实原生 `thread/list`、中转身份、匿名 HTTP／WSS 拒绝。配对命令的 JSON 也含敏感信息。
 
 代理是可选的进程级配置：`setup --proxy http://YOUR_PROXY:PORT`。项目不预填代理，也不改系统代理或 DNS。配置改变后，用 `stop`、`start` 重新加载。
 
-升级时先 stop、更新仓库，再运行 `scripts/Update.ps1` 和 doctor，保留设备身份与已授权手机。uninstall 停止本项目组件并移除本地自有快捷方式与状态；删除云资源需单独明确执行。换电脑请重新部署、重新配对，官方会话与项目文件另行迁移。
+升级时更新固定的 bootstrap 仓库，再运行 `scripts/Update.ps1` 和 doctor。候选版本先在独立目录准备依赖、构建和测试，之后才切换；激活失败回退旧代。通过 `scripts/Manage.ps1` 或 `node scripts/manage.mjs` 管理会自动选择当前代，保留设备身份与已授权手机。uninstall 停止本项目组件并移除本地自有快捷方式与状态；删除云资源需单独明确执行。换电脑请重新部署、重新配对，官方会话与项目文件另行迁移。
 
 ## 构建和验证
 

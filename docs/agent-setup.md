@@ -15,7 +15,7 @@ Read `AGENTS.md`, then this file. Work with the user's actual environment, not a
 npm ci
 npm run build
 npm test
-node dist/cli.mjs setup --json
+node scripts/manage.mjs setup --json
 ```
 
 `setup` generates a unique computer ID, separate local administrator/Agent secrets and restricted state directory. Repeating it preserves identity, authorized phones and customized settings. Shortcuts point to this checkout; keep it in a stable location. Node and project dependencies are required on the computer, not the phone. Do not run release signing tools for an ordinary installation.
@@ -27,7 +27,7 @@ Cloudflare: prepare the deployment, then run `npx wrangler login` and let the hu
 Run `npx wrangler whoami` to discover account choices. If multiple accounts are present, ask the user which one. Never paste OAuth tokens into chat, logs or Git. Then:
 
 ```powershell
-node dist/cli.mjs relay cloudflare deploy --account USER_ACCOUNT_ID --json
+node scripts/manage.mjs relay cloudflare deploy --account USER_ACCOUNT_ID --json
 ```
 
 The command generates a Worker name, creates a namespace unless one is explicitly provided, publishes the checked-in Worker template and sets a random registration secret. Runtime Wrangler configuration lives outside Git. Retrying the same command reuses saved resources. A new account/domain/payment is a human decision; default to free services without buying or upgrading anything.
@@ -39,8 +39,8 @@ An optional `setup --proxy http://USER_PROXY:PORT` affects project processes; do
 ## 4. Start and diagnose
 
 ```powershell
-node dist/cli.mjs start --json
-node dist/cli.mjs doctor --json
+node scripts/manage.mjs start --json
+node scripts/manage.mjs doctor --json
 ```
 
 Use structured fields, not string matching localized shell output. Exit 0 = success, 2 = human action/unfinished readiness, 1 = failed operation. `status` describes service state; `doctor` must confirm native `thread/list`, endpoint identity and rejection of anonymous HTTP and WSS.

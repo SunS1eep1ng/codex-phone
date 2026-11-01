@@ -14,7 +14,7 @@ node scripts/android-build.mjs --jdk JDK_DIRECTORY --tools BUILD_TOOLS_DIRECTORY
 npm run build:android -- --debug
 ```
 
-The script runs aapt2, javac, d8, jar and zipalign, producing `release/codex-phone-v0.1.0-unsigned.apk`. It does not fetch private configuration or sign automatically. Android SDK/JDK licenses must be accepted by the builder; they are not bundled. CI installs the declared platform/build-tools and uploads only the unsigned APK.
+The script runs aapt2, javac, d8, jar and zipalign, producing `release/codex-phone-v<VERSION>-unsigned.apk`. It does not fetch private configuration or sign automatically. Android SDK/JDK licenses must be accepted by the builder; they are not bundled. CI installs the declared platform/build-tools and uploads only the unsigned APK.
 
 构建使用 aapt2、javac、d8、jar 与 zipalign，不读取用户连接配置、不自动签名。构建者自行接受 Android SDK／JDK 许可；CI 仅输出未签名产物。
 
@@ -33,6 +33,6 @@ First run creates a new project RSA-3072 PKCS12 key and random password file, re
 
 Verify on a phone: install public/dev app alongside the prototype, enter a separately deployed test gateway/code, continue one native thread, approve an innocuous tool action, close/reopen without a password, and check mobile-data access/tunnel rotation. Build success alone does not validate WebView layout or device behavior.
 
-v0.1.0 release signing certificate SHA-256: `5a1f35de0a59784a74d9cc281605c57904858f865427ecf76dbf17809030f3e5`. This is the public certificate fingerprint, not the private key.
+Project release signing certificate SHA-256: `5a1f35de0a59784a74d9cc281605c57904858f865427ecf76dbf17809030f3e5`. This is the public certificate fingerprint, not the private key.
 
 实机验收须安装公开／开发版到独立测试入口，检查原生续接、无害审批、重开免密、移动网络及换址恢复。编译成功不能证明布局或设备运行效果。

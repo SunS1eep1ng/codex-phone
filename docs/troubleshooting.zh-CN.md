@@ -1,6 +1,10 @@
 # 排错指南
 
-先运行 `node dist/cli.mjs status --json`，再运行 `doctor --json`。service.log 只在本地查看，不要公开原始日志、配对页、配置、凭证、项目路径或会话内容。
+先运行 `node scripts/manage.mjs status --json`，再运行 `doctor --json`。service.log 只在本地查看，不要公开原始日志、配对页、配置、凭证、项目路径或会话内容。
+
+升级后使用固定的 `scripts/Manage.ps1`／`scripts/manage.mjs` 入口：保留的旧 `dist/cli.mjs` 是回退副本，不一定是当前代。候选准备失败不影响旧服务；激活失败必须检查是否真的回退成功。`installation_rollback_failed` 表示需要诊断，不能说已经恢复。
+
+恢复提示不会重发 prompt。结果不确定时先核对原生会话，确认后才点击“已核对电脑记录”；是否另发新请求由用户决定。草稿和附件会延迟刷新。守护进程不能让休眠／离线电脑可达，也不能修复不兼容的桌面内部接口。
 
 | 症状／代码 | 含义与处理 |
 |---|---|
@@ -23,7 +27,7 @@
 | Store 更新后多版本并存 | 验证旧进程仍属官方后复用，下一次正常退出时再打开新版本。 |
 | 旧 Android 的网页错误 | 更新系统 WebView。无需 Google 服务，但需要现代网页引擎。 |
 
-Cloudflare 恢复：后台会重启自己创建的 cloudflared 子进程，并向固定 Worker 注册新地址。KV 更新可能约一分钟才传播。Worker 不能唤醒离线／休眠电脑；电脑应保持唤醒，接入层持续运行。当前后台只监督组件，不负责自身崩溃或 Windows 登录自启动；整个接入层停止或退出后，重新打开 Codex Phone。
+Cloudflare 恢复：后台会重启自己创建的 cloudflared 子进程，并向固定 Worker 注册新地址。KV 更新可能约一分钟才传播。Worker 不能唤醒离线／休眠电脑；电脑应保持唤醒，接入层持续运行。专用 Codex Phone 入口会另启独立接入层守护，CLI 可用 start --supervise 选择启用；主动 stop／uninstall 会写入停止标记并等待守护退出，避免服务被重新拉起。首版仍不安装 Windows 登录自启动。
 
 账号授权：本地 OAuth 回调监听器消失时重新登录；缺少 `workers_scripts:write` 是 Cloudflare 发布授权问题，不能归因于桌面连接。不要把 token 粘贴进脚本或公开报告。先检查免费额度与服务可用性，不能承诺任意规模永久免费。
 

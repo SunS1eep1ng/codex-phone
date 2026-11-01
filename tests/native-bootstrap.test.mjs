@@ -104,3 +104,64 @@ test("lost renderer adapter resets the native connection without replaying a tur
   assert.equal(driver.client, null);
   assert.equal(driver.state, "error");
 });
+test("renderer lifecycle rejects late old bootstraps and disposes only its own generation", async () => {
+  let disposed = 0;
+  const manager = {
+    getHostId: () => "local",
+    getConversation: () => ({ requests: [] }),
+    sendRequest: async () => ({}),
+    addApprovalRequestListener: () => () => disposed++,
+    addNotificationCallback: () => () => disposed++,
+    addTurnCompletedListener: () => () => disposed++,
+    addStreamRoleStateCallback: () => () => disposed++,
+  };
+  const context = vm.createContext({
+    old_manager: manager,
+    new_manager: manager,
+    binding: () => {},
+  });
+  await vm.runInContext(
+    createRendererBootstrapSource("binding", "old", {
+      familyNamespace: "family",
+      generation: 1,
+    }),
+    context,
+  );
+  await vm.runInContext(
+    createRendererBootstrapSource("binding", "new", {
+      familyNamespace: "family",
+      generation: 2,
+    }),
+    context,
+  );
+  const current = context.new;
+  assert(disposed >= 4);
+  assert.equal(context.old, undefined);
+  context.old_manager = manager;
+  await assert.rejects(
+    vm.runInContext(
+      createRendererBootstrapSource("binding", "old", {
+        familyNamespace: "family",
+        generation: 1,
+      }),
+      context,
+    ),
+    /lifecycle was cancelled/,
+  );
+  await vm.runInContext(
+    createRendererDisposeSource("old", {
+      familyNamespace: "family",
+      generation: 1,
+    }),
+    context,
+  );
+  assert.equal(context.new, current);
+  assert.equal(context.family_lifecycle.generation, 2);
+  await vm.runInContext(
+    createRendererDisposeSource("new", {
+      familyNamespace: "family",
+      generation: 2,
+    }),
+    context,
+  );
+});

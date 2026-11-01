@@ -19,3 +19,4 @@ runtime/
 state/
 *.apk
 !android/README.md
+client-recovery-artifacts/

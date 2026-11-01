@@ -15,7 +15,7 @@
 npm ci
 npm run build
 npm test
-node dist/cli.mjs setup --json
+node scripts/manage.mjs setup --json
 ```
 
 setup 生成独立电脑身份、管理与 Agent 密钥，限制状态目录权限。重复执行保留身份、手机授权和自定义设置。快捷方式指向仓库，请放在固定目录。电脑需要 Node 和项目依赖，手机不用构建工具。普通安装不要调用发行签名脚本。
@@ -27,7 +27,7 @@ Cloudflare：先准备部署，运行 `npx wrangler login`，由用户在浏览�
 通过 `npx wrangler whoami` 获取可用账号，存在多个账号时请用户选择。不要将 OAuth token 粘贴到对话、日志或 Git。随后运行：
 
 ```powershell
-node dist/cli.mjs relay cloudflare deploy --account USER_ACCOUNT_ID --json
+node scripts/manage.mjs relay cloudflare deploy --account USER_ACCOUNT_ID --json
 ```
 
 命令生成 Worker 名称、创建或复用指定 KV、发布仓库模板并设置随机注册密钥。Wrangler 配置写入私有状态目录；重试复用已保存资源。新增账号、域名或付费服务必须由用户决定，默认不购买、不升级。
@@ -39,8 +39,8 @@ node dist/cli.mjs relay cloudflare deploy --account USER_ACCOUNT_ID --json
 ## 4. 启动与诊断
 
 ```powershell
-node dist/cli.mjs start --json
-node dist/cli.mjs doctor --json
+node scripts/manage.mjs start --json
+node scripts/manage.mjs doctor --json
 ```
 
 读取结构化字段，不匹配本地化报错字符串。退出码 0 表示成功、2 表示需人工操作或尚未就绪、1 表示操作失败。status 只描述后台状态，doctor 必须验证原生 `thread/list`、入口身份及匿名 HTTP／WSS 拒绝。

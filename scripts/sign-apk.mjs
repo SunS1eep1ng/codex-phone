@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url";
 import { randomBytes, createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const { version } = JSON.parse(
+  await readFile(join(root, "package.json"), "utf8"),
+);
 const jdk = process.env.JAVA_HOME;
 const tools =
   process.env.CODEX_PHONE_ANDROID_TOOLS ||
@@ -80,7 +83,7 @@ if (!(await exists(key))) {
   ]);
 }
 const debug = process.argv.includes("--debug");
-const base = `codex-phone-v0.1.0${debug ? "-dev" : ""}`;
+const base = `codex-phone-v${version}${debug ? "-dev" : ""}`;
 const input = join(root, "release", base + "-unsigned.apk"),
   output = join(root, "release", base + ".apk");
 run(exe("java"), [

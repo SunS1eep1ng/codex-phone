@@ -58,8 +58,9 @@ public class MainActivity extends Activity {
   private WebView web;
   private ValueCallback<Uri[]> fileChooser;
   private boolean connecting=false,renewing=false;
+  private boolean retryOnResume=false;
   private long lastAuth=0;
-  private long connectionGeneration=0;
+  private volatile long connectionGeneration=0;
   private int reconnectAttempt=0;
   private String expectedDevice="",pendingLink="";
   private int background=Color.rgb(244,246,249),foreground=Color.rgb(25,32,45);
@@ -68,6 +69,14 @@ public class MainActivity extends Activity {
   private boolean permanent(Exception e){return e instanceof ApiException && java.util.Arrays.asList("phone_not_authorized","wrong_computer").contains(((ApiException)e).code);}
   private static final int FILE_REQUEST=420;
   private static class ApiResult { JSONObject body;String cookie;ApiResult(JSONObject b,String c){body=b;cookie=c;} }
+  private static class SavedConnection {
+    final String gateway,device,phone,credential;
+    SavedConnection(String g,String d,String p,String c){gateway=g;device=d;phone=p;credential=c;}
+  }
+  private boolean current(long generation){return generation==connectionGeneration&&!isFinishing()&&!isDestroyed();}
+  private void whenCurrent(long generation,Runnable action){runOnUiThread(()->{if(current(generation))action.run();});}
+  private SavedConnection savedConnection(){return new SavedConnection(saved.getString("gateway",""),saved.getString("device",""),saved.getString("phone",""),saved.getString("credential",""));}
+  private boolean currentView(WebView view){return view==web&&!isFinishing()&&!isDestroyed()&&saved.contains("credential");}
   @Override public void onCreate(Bundle state){
     super.onCreate(state);saved=getSharedPreferences("connection",MODE_PRIVATE);
     if(Build.VERSION.SDK_INT>=30)getWindow().setDecorFitsSystemWindows(false);
@@ -77,18 +86,31 @@ public class MainActivity extends Activity {
     else showPairing("");
   }
   @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(intent.getData()!=null)showPairing(intent.getData().toString());}
-  @Override protected void onResume(){super.onResume();if(web!=null&&saved.contains("credential")&&SystemClock.elapsedRealtime()-lastAuth>300000&&!connecting&&!renewing)renewSilently();}
+  @Override protected void onResume(){
+    super.onResume();
+    if(saved.contains("credential")&&!connecting&&!renewing){
+      if(web==null&&retryOnResume){reconnectAttempt=0;connect(false);}
+      else if(web!=null){if(SystemClock.elapsedRealtime()-lastAuth>300000)renewSilently();else notifyRecovery();}
+    }
+  }
+  private void notifyRecovery(){
+    // Reconcile authoritative history/approvals after suspension. The page protects
+    // its draft before reloading; no prompt or write RPC is replayed here.
+    final WebView target=web;final long generation=connectionGeneration;
+    if(target!=null)target.post(()->{if(current(generation)&&web==target)target.evaluateJavascript("(()=>{const r=globalThis.codexPhoneRecovery;if(r&&typeof r.resume==='function')r.resume();})()",null);});
+  }
   private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
   private TextView text(String value,int size){TextView v=new TextView(this);v.setText(value);v.setTextColor(foreground);v.setTextSize(size);v.setPadding(0,dp(8),0,dp(8));return v;}
   private Button button(String label,View.OnClickListener click){Button b=new Button(this);b.setText(label);b.setOnClickListener(click);return b;}
   private void layout(){
+    if(fileChooser!=null){fileChooser.onReceiveValue(null);fileChooser=null;}
     if(web!=null){web.stopLoading();web.destroy();web=null;}
     root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(background);
     root.setOnApplyWindowInsetsListener((view,insets)->{if(Build.VERSION.SDK_INT>=30){android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars());int bottom=Math.max(bars.bottom,insets.getInsets(WindowInsets.Type.ime()).bottom);view.setPadding(bars.left,bars.top,bars.right,bottom);}return insets;});
     setContentView(root);
   }
   private void showPairing(String link){
-    connectionGeneration++;connecting=false;layout();pendingLink=link;expectedDevice="";
+    retryOnResume=false;connectionGeneration++;connecting=false;renewing=false;layout();pendingLink=link;expectedDevice="";
     ScrollView scroll=new ScrollView(this);LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(24),dp(22),dp(24),dp(22));scroll.addView(box);root.addView(scroll);
     box.addView(text(t("连接你的电脑","Connect your computer"),27));box.addView(text(t("首次配对后，点开应用即可继续电脑上的 Codex 会话。","Pair once, then open the app to continue your native Desktop conversations."),15));
     box.addView(text(t("连接入口","Gateway address"),14));gatewayInput=new EditText(this);gatewayInput.setTextColor(foreground);gatewayInput.setSingleLine(true);gatewayInput.setInputType(17);gatewayInput.setHint("https://…workers.dev");
@@ -126,47 +148,62 @@ public class MainActivity extends Activity {
   private void pair(){
     if(connecting)return;final String gateway,code=codeInput.getText().toString().trim();
     try{gateway=normalizedGateway(gatewayInput.getText().toString());if(!code.matches("[0-9]{8}"))throw new Exception(t("请输入 8 位数字配对码。","Enter an 8-digit pairing code."));}catch(Exception e){message.setText(e.getMessage());return;}
-    connecting=true;message.setText(t("正在验证电脑并配对…","Checking computer and pairing…"));final String wanted=expectedDevice;
+    final long generation=++connectionGeneration;connecting=true;renewing=false;message.setText(t("正在验证电脑并配对…","Checking computer and pairing…"));final String wanted=expectedDevice;
     network.execute(()->{try{
+      if(!current(generation))return;
       JSONObject info=api(gateway,"/phone-api/info",null).body;String device=info.getString("deviceId");if(!wanted.isEmpty()&&!wanted.equals(device))throw new Exception(t("入口与配对链接中的电脑不一致。","Gateway does not match the computer in the pairing link."));
+      if(!current(generation))return;
       JSONObject data=new JSONObject().put("deviceId",device).put("code",code).put("name",Build.MANUFACTURER+" "+Build.MODEL);
       ApiResult linked=api(gateway,"/phone-api/pair",data);if(!device.equals(linked.body.getString("deviceId")))throw new Exception(t("电脑身份校验失败。","Computer identity check failed."));
-      String encrypted=encrypt(linked.body.getString("credential"));saved.edit().putString("gateway",gateway).putString("device",device).putString("phone",linked.body.getString("phoneId")).putString("name",linked.body.getString("deviceName")).putString("credential",encrypted).remove("lastUrl").commit();
-      installCookie(gateway,linked.cookie,()->showWeb(gateway));
-    }catch(Exception e){runOnUiThread(()->{connecting=false;message.setText(e.getMessage()==null?t("连接失败，请重试。","Connection failed. Try again."):e.getMessage());});}});
+      if(!current(generation))return;
+      final String encrypted=encrypt(linked.body.getString("credential")),phone=linked.body.getString("phoneId"),name=linked.body.getString("deviceName");
+      installCookie(gateway,linked.cookie,generation,()->{saved.edit().putString("gateway",gateway).putString("device",device).putString("phone",phone).putString("name",name).putString("credential",encrypted).remove("lastUrl").commit();showWeb(gateway);});
+    }catch(Exception e){whenCurrent(generation,()->{connecting=false;message.setText(e.getMessage()==null?t("连接失败，请重试。","Connection failed. Try again."):e.getMessage());});}});
   }
   private void connect(boolean quiet){
-    if(connecting)return;final long generation=++connectionGeneration;connecting=true;if(!quiet){layout();root.setPadding(dp(24),dp(36),dp(24),dp(24));root.addView(text(t("正在连接电脑…","Connecting to computer…"),24));message=text(t("正在恢复已保存的手机授权。","Restoring saved phone authorization."),15);root.addView(message);}
-    network.execute(()->{try{String gateway=saved.getString("gateway","");JSONObject data=credentials();ApiResult result=api(gateway,"/phone-api/session",data);if(!saved.getString("device","").equals(result.body.getString("deviceId")))throw new Exception(t("电脑身份校验失败。","Computer identity check failed."));installCookie(gateway,result.cookie,()->showWeb(gateway));}
-      catch(Exception e){runOnUiThread(()->{if(isFinishing()||isDestroyed()||generation!=connectionGeneration)return;String reason=e.getMessage();showError(reason);if(saved.contains("credential")&&reconnectAttempt<8&&!permanent(e)){int delay=Math.min(15000,1000*(1<<reconnectAttempt++));root.addView(text(t("正在等待电脑连接恢复，将自动重试。","Waiting for computer. Retrying automatically."),14));root.postDelayed(()->{if(!isFinishing()&&!isDestroyed()&&!connecting&&generation==connectionGeneration)connect(false);},delay);}});}});
+    if(connecting)return;retryOnResume=false;final long generation=++connectionGeneration;final SavedConnection connection=savedConnection();connecting=true;renewing=false;if(!quiet){layout();root.setPadding(dp(24),dp(36),dp(24),dp(24));root.addView(text(t("正在连接电脑…","Connecting to computer…"),24));message=text(t("正在恢复已保存的手机授权。","Restoring saved phone authorization."),15);root.addView(message);}
+    network.execute(()->{try{if(!current(generation))return;ApiResult result=api(connection.gateway,"/phone-api/session",credentials(connection));if(!current(generation))return;if(!connection.device.equals(result.body.getString("deviceId")))throw new Exception(t("电脑身份校验失败。","Computer identity check failed."));installCookie(connection.gateway,result.cookie,generation,()->showWeb(connection.gateway));}
+      catch(Exception e){whenCurrent(generation,()->{String reason=e.getMessage();showError(reason);if(saved.contains("credential")&&reconnectAttempt<8&&!permanent(e)){int delay=Math.min(15000,1000*(1<<reconnectAttempt++));root.addView(text(t("正在等待电脑连接恢复，将自动重试。","Waiting for computer. Retrying automatically."),14));root.postDelayed(()->{if(current(generation)&&!connecting)connect(false);},delay);}});}});
   }
-  private JSONObject credentials()throws Exception{return new JSONObject().put("deviceId",saved.getString("device","")).put("phoneId",saved.getString("phone","")).put("credential",decrypt(saved.getString("credential","")));}
-  private void installCookie(String gateway,String cookie,Runnable done)throws Exception{
+  private JSONObject credentials(SavedConnection connection)throws Exception{return new JSONObject().put("deviceId",connection.device).put("phoneId",connection.phone).put("credential",decrypt(connection.credential));}
+  private void installCookie(String gateway,String cookie,long generation,Runnable done)throws Exception{
+    if(!current(generation))return;
     if(cookie==null||!cookie.startsWith("bridge_phone_session="))throw new Exception(t("电脑没有返回有效的手机会话。","Computer did not return a valid phone session."));
-    runOnUiThread(()->{if(isFinishing()||isDestroyed())return;CookieManager manager=CookieManager.getInstance();manager.setAcceptCookie(true);manager.setCookie(gateway,cookie,ok->{if(network.isShutdown())return;network.execute(()->{manager.flush();runOnUiThread(()->{if(isFinishing()||isDestroyed())return;connecting=false;renewing=false;reconnectAttempt=0;lastAuth=SystemClock.elapsedRealtime();done.run();});});});});
+    whenCurrent(generation,()->{CookieManager manager=CookieManager.getInstance();manager.setAcceptCookie(true);manager.setCookie(gateway,cookie,ok->{if(!current(generation)||network.isShutdown())return;network.execute(()->{if(!current(generation))return;manager.flush();whenCurrent(generation,()->{connecting=false;renewing=false;reconnectAttempt=0;lastAuth=SystemClock.elapsedRealtime();done.run();});});});});
   }
   private void renewSilently(){
-    renewing=true;network.execute(()->{try{String gateway=saved.getString("gateway","");ApiResult result=api(gateway,"/phone-api/session",credentials());installCookie(gateway,result.cookie,()->{});}catch(Exception e){runOnUiThread(()->{renewing=false;});}});
+    if(renewing||connecting)return;final long generation=connectionGeneration;final SavedConnection connection=savedConnection();renewing=true;
+    network.execute(()->{try{if(!current(generation))return;ApiResult result=api(connection.gateway,"/phone-api/session",credentials(connection));if(!current(generation))return;if(!connection.device.equals(result.body.getString("deviceId")))throw new Exception(t("电脑身份校验失败。","Computer identity check failed."));installCookie(connection.gateway,result.cookie,generation,()->notifyRecovery());}catch(Exception e){whenCurrent(generation,()->{renewing=false;notifyRecovery();});}});
   }
   private void showError(String reason){
-    connecting=false;layout();root.setPadding(dp(24),dp(30),dp(24),dp(24));root.addView(text(t("暂时没有连接上电脑","Computer unavailable"),24));root.addView(text(reason==null?t("请确认电脑联网并已打开 ChatGPT。","Check that your PC is online and Codex Desktop is open."):reason,15));root.addView(button(t("重试","Retry"),v->connect(false)));root.addView(button(t("重新配对","Pair again"),v->showPairing("")));
+    retryOnResume=true;connecting=false;layout();root.setPadding(dp(24),dp(30),dp(24),dp(24));root.addView(text(t("暂时没有连接上电脑","Computer unavailable"),24));root.addView(text(reason==null?t("请确认电脑联网并已打开 ChatGPT。","Check that your PC is online and Codex Desktop is open."):reason,15));root.addView(button(t("重试","Retry"),v->connect(false)));root.addView(button(t("重新配对","Pair again"),v->showPairing("")));
   }
   private boolean sameOrigin(String value){try{return new URL(value).getAuthority().equals(new URL(saved.getString("gateway","")).getAuthority())&&"https".equals(new URL(value).getProtocol());}catch(Exception e){return false;}}
   private void showWeb(String gateway){
-    layout();LinearLayout bar=new LinearLayout(this);bar.setOrientation(LinearLayout.HORIZONTAL);bar.setPadding(dp(12),0,dp(8),0);
+    retryOnResume=false;layout();LinearLayout bar=new LinearLayout(this);bar.setOrientation(LinearLayout.HORIZONTAL);bar.setPadding(dp(12),0,dp(8),0);
     TextView title=text(saved.getString("name",t("我的电脑","My computer")),13);bar.addView(title,new LinearLayout.LayoutParams(0,dp(42),1));Button menu=button("⋮",v->{PopupMenu popup=new PopupMenu(this,v);popup.getMenu().add(t("重新连接","Reconnect")).setOnMenuItemClickListener(item->{connect(false);return true;});popup.getMenu().add(t("解除手机绑定","Unpair phone")).setOnMenuItemClickListener(item->{confirmUnpair();return true;});popup.show();});bar.addView(menu,new LinearLayout.LayoutParams(dp(48),dp(42)));root.addView(bar);
     web=new WebView(this);web.setBackgroundColor(background);root.addView(web,new LinearLayout.LayoutParams(-1,0,1));WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(true);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setMediaPlaybackRequiresUserGesture(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
     web.setWebViewClient(new WebViewClient(){
-      @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){String value=request.getUrl().toString();if(sameOrigin(value)||"about:blank".equals(value))return false;if(request.isForMainFrame()&&(value.startsWith("https://")||value.startsWith("http://"))){try{startActivity(new Intent(Intent.ACTION_VIEW,request.getUrl()));}catch(Exception ignored){}}return true;}
-      @Override public void doUpdateVisitedHistory(WebView view,String url,boolean reload){if(sameOrigin(url))saved.edit().putString("lastUrl",url).apply();}
-      @Override public void onReceivedSslError(WebView view,SslErrorHandler handler,SslError error){handler.cancel();showError(t("连接证书验证失败，请检查入口地址和手机时间。","TLS verification failed. Check gateway address and phone clock."));}
-      @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){if(request.isForMainFrame())showError(t("网页暂时无法加载，请检查手机网络后重试。","Page could not load. Check your network and retry."));}
-      @Override public void onReceivedHttpError(WebView view,WebResourceRequest request,WebResourceResponse response){if(request.isForMainFrame()&&response.getStatusCode()>=400)showError(t("电脑入口暂时不可用，请稍后重试。","Computer gateway unavailable. Try again shortly."));}
+      @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest request){if(!currentView(view))return true;String value=request.getUrl().toString();if(sameOrigin(value)||"about:blank".equals(value))return false;if(request.isForMainFrame()&&(value.startsWith("https://")||value.startsWith("http://"))){try{startActivity(new Intent(Intent.ACTION_VIEW,request.getUrl()));}catch(Exception ignored){}}return true;}
+      @Override public void doUpdateVisitedHistory(WebView view,String url,boolean reload){if(currentView(view)&&sameOrigin(url))saved.edit().putString("lastUrl",url).apply();}
+      @Override public void onReceivedSslError(WebView view,SslErrorHandler handler,SslError error){handler.cancel();if(currentView(view))showError(t("连接证书验证失败，请检查入口地址和手机时间。","TLS verification failed. Check gateway address and phone clock."));}
+      @Override public void onReceivedError(WebView view,WebResourceRequest request,WebResourceError error){if(currentView(view)&&request.isForMainFrame())showError(t("网页暂时无法加载，请检查手机网络后重试。","Page could not load. Check your network and retry."));}
+      @Override public void onReceivedHttpError(WebView view,WebResourceRequest request,WebResourceResponse response){if(currentView(view)&&request.isForMainFrame()&&response.getStatusCode()>=400)showError(t("电脑入口暂时不可用，请稍后重试。","Computer gateway unavailable. Try again shortly."));}
     });
-    web.setWebChromeClient(new WebChromeClient(){@Override public boolean onShowFileChooser(WebView view,ValueCallback<Uri[]> callback,FileChooserParams params){if(fileChooser!=null)fileChooser.onReceiveValue(null);fileChooser=callback;try{startActivityForResult(params.createIntent(),FILE_REQUEST);}catch(Exception e){fileChooser.onReceiveValue(null);fileChooser=null;return false;}return true;}});
+    web.setWebChromeClient(new WebChromeClient(){@Override public boolean onShowFileChooser(WebView view,ValueCallback<Uri[]> callback,FileChooserParams params){if(!currentView(view)){callback.onReceiveValue(null);return false;}if(fileChooser!=null)fileChooser.onReceiveValue(null);fileChooser=callback;try{startActivityForResult(params.createIntent(),FILE_REQUEST);}catch(Exception e){fileChooser.onReceiveValue(null);fileChooser=null;return false;}return true;}});
     String last=saved.getString("lastUrl","");web.loadUrl(sameOrigin(last)?last:gateway+"/#/device/"+saved.getString("device",""));
   }
-  private void confirmUnpair(){new AlertDialog.Builder(this).setTitle(t("解除手机绑定？","Unpair this phone?")).setMessage(t("解除后需要重新使用电脑上的配对码。电脑会话会保留。","You will need a new pairing code. Desktop conversations are kept.")).setNegativeButton(t("取消","Cancel"),null).setPositiveButton(t("解除绑定","Unpair"),(dialog,which)->{network.execute(()->{try{api(saved.getString("gateway",""),"/phone-api/unpair",credentials());runOnUiThread(()->{saved.edit().clear().apply();CookieManager.getInstance().removeAllCookies(ok->{CookieManager.getInstance().flush();showPairing("");});});}catch(Exception e){runOnUiThread(()->new AlertDialog.Builder(this).setMessage(t("暂时无法通知电脑解除授权，请联网后重试。","Could not notify computer. Reconnect and try again.")).setPositiveButton(t("知道了","OK"),null).show());}});}).show();}
+  private void confirmUnpair(){
+    final long dialogGeneration=connectionGeneration;
+    new AlertDialog.Builder(this).setTitle(t("解除手机绑定？","Unpair this phone?")).setMessage(t("解除后需要重新使用电脑上的配对码。电脑会话会保留。","You will need a new pairing code. Desktop conversations are kept.")).setNegativeButton(t("取消","Cancel"),null).setPositiveButton(t("解除绑定","Unpair"),(dialog,which)->{
+      if(!current(dialogGeneration))return;
+      final long generation=++connectionGeneration;final SavedConnection connection=savedConnection();connecting=true;renewing=false;retryOnResume=false;
+      network.execute(()->{try{
+        if(!current(generation))return;api(connection.gateway,"/phone-api/unpair",credentials(connection));
+        whenCurrent(generation,()->{saved.edit().clear().apply();CookieManager manager=CookieManager.getInstance();manager.removeAllCookies(ok->{if(!current(generation)||network.isShutdown())return;network.execute(()->{if(!current(generation))return;manager.flush();whenCurrent(generation,()->showPairing(""));});});});
+      }catch(Exception e){whenCurrent(generation,()->{connecting=false;renewing=false;new AlertDialog.Builder(this).setMessage(t("暂时无法通知电脑解除授权，请联网后重试。","Could not notify computer. Reconnect and try again.")).setPositiveButton(t("知道了","OK"),null).show();});}});
+    }).show();
+  }
   private SecretKey key()throws Exception{
     KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);String alias="codex-phone-credential";
     if(!store.containsAlias(alias)){KeyGenerator generator=KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES,"AndroidKeyStore");generator.init(new KeyGenParameterSpec.Builder(alias,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());generator.generateKey();}
@@ -176,5 +213,5 @@ public class MainActivity extends Activity {
   private String decrypt(String value)throws Exception{String[] data=value.split(":",2);Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding");cipher.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,Base64.decode(data[0],Base64.NO_WRAP)));return new String(cipher.doFinal(Base64.decode(data[1],Base64.NO_WRAP)),StandardCharsets.UTF_8);}
   @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==FILE_REQUEST&&fileChooser!=null){fileChooser.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result,data));fileChooser=null;}}
   @Override public void onBackPressed(){if(web!=null&&web.canGoBack())web.goBack();else super.onBackPressed();}
-  @Override protected void onDestroy(){if(fileChooser!=null){fileChooser.onReceiveValue(null);fileChooser=null;}if(web!=null){web.destroy();web=null;}network.shutdownNow();super.onDestroy();}
+  @Override protected void onDestroy(){connectionGeneration++;if(fileChooser!=null){fileChooser.onReceiveValue(null);fileChooser=null;}if(web!=null){web.destroy();web=null;}network.shutdownNow();super.onDestroy();}
 }
