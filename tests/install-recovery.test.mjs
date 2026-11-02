@@ -15,8 +15,11 @@ import {
 } from "../scripts/uninstall-cleanup.mjs";
 
 async function fixture(t, { managed = false } = {}) {
-  const base = await fs.mkdtemp(join(tmpdir(), "codex-phone-install-"));
-  assert(resolve(base).startsWith(resolve(tmpdir())));
+  // Hosted Windows can return an 8.3 alias from tmpdir(); use the same
+  // physical-path form as the installer when matching mocked CLI calls.
+  const tempRoot = await fs.realpath(tmpdir());
+  const base = await fs.mkdtemp(join(tempRoot, "codex-phone-install-"));
+  assert(resolve(base).startsWith(resolve(tempRoot)));
   t.after(() => fs.rm(base, { recursive: true, force: true }));
   const sourceRoot = join(base, "source"),
     stateDir = join(base, "state");
