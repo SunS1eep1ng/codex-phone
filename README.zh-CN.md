@@ -1,44 +1,50 @@
 # codex-phone
 
-[English](README.md) · [AI 部署指南](docs/agent-setup.zh-CN.md) · [排错](docs/troubleshooting.zh-CN.md)
+### 电脑里的 Codex，装进口袋。
 
-在 Android 手机上继续**电脑官方 Codex 桌面应用中的已有会话**，回到电脑后继续同一条记录。执行、工具、项目文件和账号登录仍由电脑负责。手机配对的是你自己部署的接入层，无需登录 ChatGPT。
+[English](README.md) · [下载 APK](https://github.com/SunS1eep1ng/codex-phone/releases) · [AI 部署指南](docs/agent-setup.zh-CN.md) · [排错](docs/troubleshooting.zh-CN.md)
 
-这是**非官方、自行部署的配套工具**，与 OpenAI 没有官方关联。它依赖可能随更新变化的桌面内部接口。本项目仍为实验性预发行版，安装前请看[兼容与验收记录](docs/compatibility.md)。中转可达或端口打开，均不代表原生会话已经可用。
+**电脑上开个头，手机上接着聊，回到桌前继续同一条会话。**
 
-## 首版能力
+codex-phone 把你已有的 **Codex 桌面会话**带到 Android 手机。出门后补一句需求、看看实时回复、处理支持的工具审批；电脑继续使用原有账号、工具和项目文件执行任务。
 
-- Windows 专用启动入口、本机 Node Agent，接入原生桌面会话、消息、流式事件与支持的权限审批。
-- 通用 Android WebView 应用：首次配对、Android Keystore 加密凭证、自动认证、重连及恢复上次会话。
-- 一次性配对码、服务器只存凭证哈希，HTTP／WebSocket 统一认证，撤销授权会断开现有连接。
-- 完整 Cloudflare Worker＋KV＋隧道方案，也能接入自有 HTTPS／WSS 反向代理。
-- 幂等安装、结构化诊断与管理命令。每位用户使用自己的电脑、账号与中转，没有共享托管服务或维护者服务器。
+首次配对后，点开手机应用就能继续。**手机无需登录 ChatGPT。**
 
-首版界面与验收范围为 Windows 11 x64＋Android、一台电脑＋一部手机，没有设备数量锁。暂不提供多电脑选择、其他桌面平台或保留授权的一键换机。上游的独立模型供应商、单独 CLI 执行、终端与自动化功能不属于本项目范围，网关会拒绝这些入口。
+Windows 11 x64 · Android 8.0+ 与较新的系统 WebView · 自行部署 · MIT 开源
 
-## 工作原理
+## 从桌前出发，在手机上继续
 
-```mermaid
-flowchart LR
-  Phone[Android 应用] -->|HTTPS 与已认证 WSS| Relay[你自己的 HTTPS 中转]
-  Relay -->|隧道或反向代理| Gateway[本机认证网关]
-  Gateway --> UI[固定版本 MIT 上游界面和服务器]
-  UI -->|本机密钥与 Agent 协议| Agent[Node Agent]
-  Agent -->|仅回环 CDP| Desktop[官方 Codex 桌面应用]
-  Desktop --> Files[账号、工具和项目文件]
-```
+1. **在电脑前：**从开始菜单打开 **Codex Phone**，照常在 Codex 中开始工作。
+2. **出门之后：**打开已配对的 Android 应用，选中已有会话，用 Wi-Fi 或移动数据继续发消息。
+3. **回到桌前：**打开同一条会话，接着手机上推进的工作往下做。
 
-桌面调试接口只监听本机回环，**不会暴露给中转**。网关检查每个业务请求的授权，不因 `Host` 被改成 localhost 而绕过。私有管理接口和 Agent 另用独立密钥。中转会终止 TLS、能够看到流量，因此这里没有对中转运营者的端到端加密。详见[架构与隐私](docs/architecture.md)。
+比如：出门前让 Codex 排查一个 bug，路上用手机查看分析，补一句“按第二个方案修改”，回到电脑时接着检查代码变更。
 
-## 让 AI agent 安装
+| 你想做的事             | 用起来是什么样                                      |
+| ---------------------- | --------------------------------------------------- |
+| 离开电脑后继续推进工作 | 打开已有会话，任务仍在你的电脑上执行                |
+| 随时补一句需求         | 聊天界面、流式回复，以及支持的权限审批              |
+| 明天再打开应用         | 恢复已保存的配对授权和上次会话                      |
+| 外出时找到自己的电脑   | 通过自有 Cloudflare 或反向代理的固定 HTTPS 入口连接 |
+| 管理整套服务           | 专用开始菜单入口、诊断、手机授权及升级命令          |
 
-需要 Windows 11 x64、Node **24.16.0 或更高版本**、Git、已安装并登录的官方 Codex 桌面应用，以及 API 26+ 且系统 WebView 较新的 Android 手机。普通用户直接下载 APK，不需要 Android 构建工具。已有 HTTPS／WSS 中转时不必使用 Cloudflare。
+使用时让电脑保持开机、联网，并运行接入服务。Codex 在这台电脑上完成实际工作。
 
-可以直接把这段发给电脑上的 AI agent：
+## 开始连接
 
-> 帮我部署 https://github.com/SunS1eep1ng/codex-phone 。先读 AGENTS.md 和 docs/agent-setup.zh-CN.md，复用我已安装的官方 Codex 桌面应用，使用独立私有状态目录。先诊断，再按我的环境选择 Cloudflare 或自有 HTTPS 中转，执行 doctor 并引导手机配对。不购买服务、不改系统 DNS／代理、不强制关闭桌面应用、不替换为独立 CLI 会话。
+### 让 AI agent 帮你部署
 
-手动准备，在 PowerShell 运行：
+电脑准备好 Windows 11 x64、Git、Node **24.16.0 或更高版本**，以及已经登录的官方 Codex 桌面应用。手机需要 Android API 26+ 和较新的系统 WebView，直接从 Releases 安装 APK 即可。
+
+把这段发给电脑上的 AI agent：
+
+> 帮我部署 https://github.com/SunS1eep1ng/codex-phone 。阅读 AGENTS.md 和 docs/agent-setup.zh-CN.md，检查环境，复用我已安装的官方 Codex 桌面应用，使用独立私有状态目录。按我的网络环境选择 Cloudflare 或自有 HTTPS 中转，完成配置、执行 doctor，并引导我配对手机，验证两端能继续同一条会话。
+
+Agent 负责准备安装和配置；需要账号授权时由你完成，最后在手机上安装并配对。
+
+### 也可以自己安装
+
+在 PowerShell 运行：
 
 ```powershell
 git clone https://github.com/SunS1eep1ng/codex-phone.git
@@ -46,11 +52,9 @@ Set-Location codex-phone
 .\scripts\Install.ps1
 ```
 
-安装只增加 **Codex Phone** 和 **Codex Phone Pair** 两个开始菜单入口，不替换官方快捷方式。仓库目录也是本次安装的代码目录，请放在固定位置；搬动后重跑 setup。私有状态位于 Git 外的 `%LOCALAPPDATA%\codex-phone`。用 `CODEX_PHONE_STATE` 或 `--state` 可以隔离另一套安装。
+把仓库放在固定位置，它提供安装引导和管理入口。私有配置与手机授权另外保存在 `%LOCALAPPDATA%\codex-phone`。
 
-### 选择中转
-
-**Cloudflare**：先用你自己的账号在浏览器授权，再部署：
+**选择连接方式。** 使用 Cloudflare 时，登录你自己的账号并部署：
 
 ```powershell
 npx wrangler login
@@ -58,63 +62,85 @@ npx wrangler whoami
 node scripts/manage.mjs relay cloudflare deploy --account YOUR_ACCOUNT_ID
 ```
 
-命令创建属于你的 Worker 与 KV，配置和密钥写入私有状态目录。本项目管理的 cloudflared Quick Tunnel 只连接认证网关，Worker 保存最新隧道地址，因此隧道换址后手机仍使用同一个 Worker 入口。Quick Tunnel 没有可用性保证，不能视作生产 SLA。详见[中转指南](docs/relay.md)。
+命令会在你的账号下创建 Worker 和 KV。Worker 提供固定入口，项目管理的隧道负责连接电脑；隧道地址改变后，入口自动更新目标，手机继续使用原来的地址。
 
-**已有 HTTPS 中转**：把支持 HTTP／WSS 的反向代理指向配置里保存的网关回环端口，然后设置入口：
+已有 HTTPS／WSS 反向代理时，将它指向配置中保存的网关回环端口，再设置公开入口：
 
 ```powershell
 node scripts/manage.mjs setup --endpoint https://YOUR_GATEWAY
 ```
 
-服务器由用户自行维护。它必须保留 Cookie、支持 WebSocket Upgrade、传递错误并禁止缓存；不要暴露管理或 CDP 端口。[接口与 nginx 示例](docs/relay.md)给出了具体约束。
+Cloudflare 配置和 nginx 示例见[中转指南](docs/relay.md)。
 
-### 启动、诊断和配对
+**启动并配对：**
 
 ```powershell
-node scripts/manage.mjs start
+node scripts/manage.mjs start --supervise
 node scripts/manage.mjs doctor --json
 node scripts/manage.mjs pair --open
 ```
 
-如果桌面应用已运行但没启用调试接口，需要**正常退出一次，包括托盘图标**。后台会等待并自动重新打开官方应用，请不要强制结束进程或在交接时手动抢先打开。之后通过 **Codex Phone** 启动会复用已有实例，并在后台运行期间恢复相关组件。专用开始菜单入口还会启动独立守护进程，在接入层意外退出后恢复它；主动 stop／uninstall 会停用守护。完全停止后若使用原始官方入口启动，可能需要再次正常退出。首版没有安装 Windows 登录自启动。
+如果 Codex 已运行但没有启用本机桥接接口，首次配置时正常退出一次，包括托盘图标。让启动器保持运行，它会自动重新打开已启用接口的 Codex。之后日常从开始菜单打开 **Codex Phone**，即可启动或复用已配置的实例，同时启用接入服务的恢复守护。
 
-从 [Releases](https://github.com/SunS1eep1ng/codex-phone/releases) 下载签名 APK 与 SHA-256 文件，核验后安装。输入配对页的入口地址和 8 位码，或粘贴配对链接。配对码 10 分钟有效、仅用一次，请勿分享配对页。公开版包名为 `io.github.suns1eep1ng.codexphone`，开发版使用 `.dev`。
+在 Android 手机上：
 
-手机打开已有会话发送无副作用测试消息，再到电脑确认同一条回复。另行测试 APK 关闭重开免密、移动数据访问及权限审批。模拟测试不能替代这些实机验收。
+1. 从 [Releases](https://github.com/SunS1eep1ng/codex-phone/releases) 下载并安装签名 APK；每个发行版附有 SHA-256 校验值。
+2. 粘贴配对链接，或输入电脑配对页上的入口地址与 8 位配对码。配对码仅供本人使用，10 分钟有效、只能使用一次。
+3. 打开已有会话发一条消息，在电脑上查看同一条回复，再试一次关闭重开应用和移动数据连接。
 
-## 日常管理
+配对完成，这部手机就是你随身的 Codex 会话入口。
 
-```powershell
-node scripts/manage.mjs status --json
-node scripts/manage.mjs doctor --json
-node scripts/manage.mjs phones list --json
-node scripts/manage.mjs phones revoke PHONE_ID
-node scripts/manage.mjs relay check --json
-node scripts/manage.mjs stop
-node scripts/manage.mjs uninstall
+## 日常使用与恢复
+
+手机凭证由 Android Keystore 加密保存，重开应用会恢复认证和上次会话。接入服务负责隧道与原生连接的重连；守护进程会在接入服务意外退出后恢复它。
+
+连接中断后，恢复流程从桌面端读取最新历史与待审批事项，并保护尚未发送的草稿。某次发送结果不确定时，先核对电脑上的记录，再在恢复提示中确认，之后再决定是否重新发送同一请求。
+
+| 命令                                             | 用途                         |
+| ------------------------------------------------ | ---------------------------- |
+| `node scripts/manage.mjs status --json`          | 查看服务状态                 |
+| `node scripts/manage.mjs doctor --json`          | 检查桌面会话访问、中转及认证 |
+| `node scripts/manage.mjs pair --open`            | 打开新的配对页               |
+| `node scripts/manage.mjs phones list --json`     | 查看已授权手机               |
+| `node scripts/manage.mjs phones revoke PHONE_ID` | 撤销手机授权并断开其现有连接 |
+| `node scripts/manage.mjs relay check --json`     | 检查中转健康状态             |
+| `node scripts/manage.mjs stop`                   | 停止接入服务及恢复守护       |
+| `node scripts/manage.mjs uninstall`              | 卸载本地安装                 |
+
+**升级：**更新安装引导所用的仓库，运行 `scripts/Update.ps1`，再执行 `doctor`。安装器先在独立目录准备候选版本的依赖、构建和测试，再切换运行版本；激活失败时回退旧版本，设备身份与已配对手机会保留。
+
+需要进程级网络代理时，使用 `setup --proxy http://YOUR_PROXY:PORT`，再通过 `stop` 和 `start --supervise` 加载设置。命令的结构化结果包含 `status`、`code` 和相关 `next` 操作，详见[部署指南](docs/agent-setup.zh-CN.md)。
+
+## 工作原理
+
+```mermaid
+flowchart LR
+  Phone[Android 应用] -->|HTTPS / WSS| Relay[你的固定 HTTPS 入口]
+  Relay --> Gateway[本机认证网关]
+  Gateway --> UI[会话界面和服务器]
+  UI --> Agent[本机 Node Agent]
+  Agent -->|回环 CDP| Desktop[Codex 桌面应用]
+  Desktop --> Files[工具与项目文件]
 ```
 
-结果含 `status`（`ok`、`needs_user_action`、`error`）、`code` 及相关 `next` 操作；退出码依次为 0、2、1。`start` 表示后台服务启动，`start --supervise` 另启接入层进程恢复（不强制重启桌面应用），**doctor** 才分别验证真实原生 `thread/list`、中转身份、匿名 HTTP／WSS 拒绝。配对命令的 JSON 也含敏感信息。
+网关负责配对及 HTTP／WebSocket 认证，本机 Node Agent 将手机会话界面接入 Codex 桌面应用。桌面接口和管理接口监听本机回环，公开入口经由认证网关转发。[架构与隐私](docs/architecture.md)介绍了数据路径、中转信任关系和凭证管理。
 
-代理是可选的进程级配置：`setup --proxy http://YOUR_PROXY:PORT`。项目不预填代理，也不改系统代理或 DNS。配置改变后，用 `stop`、`start` 重新加载。
-
-升级时更新固定的 bootstrap 仓库，再运行 `scripts/Update.ps1` 和 doctor。候选版本先在独立目录准备依赖、构建和测试，之后才切换；激活失败回退旧代。通过 `scripts/Manage.ps1` 或 `node scripts/manage.mjs` 管理会自动选择当前代，保留设备身份与已授权手机。uninstall 停止本项目组件并移除本地自有快捷方式与状态；删除云资源需单独明确执行。换电脑请重新部署、重新配对，官方会话与项目文件另行迁移。
-
-## 构建和验证
+## 开发、兼容与项目资料
 
 ```powershell
 npm ci
 npm run build
 npm test
 npm run audit:publish
-# 显式选择的桌面只读验收，不关闭、不重启应用：
-npm run test:native -- --allow-desktop-read
 ```
 
-默认测试只使用临时状态与模拟服务，不连接用户部署。覆盖认证、Host 改写、撤销、Agent 分块与重复请求、断线重连、原生历史与审批转发、桌面版本选择、端口占用、子进程退出码及固定上游联测。详见[验收记录](docs/compatibility.md)与 [Android 构建签名](android/README.md)。CI 构建**未签名** APK；发行版由维护者在本地使用 Git／CI 外的独立项目密钥签名。
+测试使用临时状态和模拟服务，覆盖认证、重连、请求去重、历史与审批转发、生命周期恢复及升级回退。[兼容记录](docs/compatibility.md)分别列出已测试版本和桌面／手机实机验收情况。当前主要使用流程面向 Windows 11 x64 与 Android，一台电脑配一部手机。
 
-## 来源与许可证
+- [AI 部署指南](docs/agent-setup.zh-CN.md)：安装顺序、配置与管理。
+- [排错指南](docs/troubleshooting.zh-CN.md)：诊断与恢复步骤。
+- [Android 构建与签名](android/README.md)：自行构建 APK；CI 生成未签名构建，发行 APK 在本地签名。
+- [更新记录](CHANGELOG.md)：版本变化与恢复机制改进。
 
-MIT。复用 [YusenDu/codex-remote-bridge](https://github.com/YusenDu/codex-remote-bridge) 的固定 **v0.1.101** 源码、服务器、界面与 Agent 协议，原始项目为 [friuns2/codexui](https://github.com/friuns2/codexui)。[upstream.lock.json](upstream.lock.json) 保存版本、地址与 SHA-256，构建时下载并校验，不修改打包后的字符串，也不安装全局 HTTP 钩子。
+codex-phone 是采用 MIT 许可证的独立 Codex 桌面配套项目。它复用 [YusenDu/codex-remote-bridge](https://github.com/YusenDu/codex-remote-bridge) 固定 **v0.1.101** 的界面、服务器和 Agent 协议，原始项目为 [friuns2/codexui](https://github.com/friuns2/codexui)。本项目新增原生 Node Agent、认证网关、Android 配对客户端、中转提供者，以及安装与恢复管理。版本和校验值见 [upstream.lock.json](upstream.lock.json)，来源说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-本项目新增 Node 原生 Agent、安装与生命周期管理、认证网关、手机配对客户端、中转提供者和部署指南；渲染器适配器是注明来源的 MIT 源码改编。不再分发官方桌面程序或提取的官方 JavaScript。详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)、[SECURITY.md](SECURITY.md) 和[发布流程](docs/releasing.md)。
+[MIT 许可证](LICENSE) · [安全说明](SECURITY.md) · [发布流程](docs/releasing.md)

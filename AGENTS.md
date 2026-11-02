@@ -19,4 +19,5 @@ This is an unofficial, self-hosted Windows/Android companion for **existing nati
 - Native/phone acceptance is opt-in and its tested versions must be recorded honestly. Source/build checks do not prove a phone installed or connected.
 - Keep upstream provenance and MIT notices. Do not commit official Desktop binaries, extracted app code, runtime data, logs, signed APKs, signing keys, or generated cloud account configuration.
 - Run `npm run build`, `npm test`, `npm run audit:publish` and the relevant Windows/Android checks. Use Conventional Commits, no Co-Authored-By trailer.
+- For maintainer-requested changes to `SunS1eep1ng/codex-phone`, commit and push completed changes after the relevant checks pass. Release publication and live deployment are separate tasks.
 - Preserve the working private deployment when developing or testing another instance. Use a separate state root, process identity and adapter namespace.
