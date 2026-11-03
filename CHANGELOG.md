@@ -3,6 +3,7 @@
 ## 0.1.1 — local recovery candidate / 本地恢复修复候选
 
 - Preserve shared native connections after ordinary RPC rejections; fence old renderer generations and cancel in-progress connections on stop.
+- Support the Desktop-owned manager service used by Desktop 26.1027, retaining the existing native session and forwarding its RPC, notifications and approvals. Discover loaded modules through CDP instead of assuming an entry-script import layout.
 - Bound Agent queue/response memory, serialize chunks with send callbacks, and expose authenticated reconnect/resync state. Unknown write outcomes are never automatically replayed.
 - Persist minimal write-operation metadata before dispatch; mark interrupted/unknown outcomes for conversation reconciliation without saving prompts.
 - Recover phone views from authoritative native history/approvals after foreground/network/stream or native-epoch changes. Preserve unsent drafts/attachments and the selected conversation.
@@ -10,6 +11,7 @@
 - Close active HTTP event streams and WebSockets after revocation/expiry. Reject malformed Upgrade requests without terminating the service.
 - Authenticate local control requests and responses with nonce-bound HMAC; never send the raw administrator secret to a potentially reused port.
 - Use a single abortable tunnel recovery monitor. Add an opt-in external companion supervisor; explicit stop/uninstall inhibits restart.
+- Retire a live Quick Tunnel rejected with `Unauthorized: Tunnel not found`, clear its stale registration and create a fresh tunnel with bounded backoff.
 - Prepare candidate dependencies/build/tests before switching installations; roll back failed activation and preserve the previous code, phone state and credentials. Stable management/Start-menu entries follow the verified active generation.
 - Canonicalize private paths, serialize first setup, retry bounded Windows sharing conflicts, and make parser errors honor JSON mode.
 - Replace the upstream service worker as readable project code; never cache auth/business HTML or error JSON. Compose the recovery script into HTML at build time without modifying upstream compiled JavaScript.

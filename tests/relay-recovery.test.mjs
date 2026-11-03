@@ -172,3 +172,39 @@ test("child error invalidates registration state and the existing monitor recove
   assert.equal(f.timers.size, 1);
   await f.relay.stop();
 });
+
+test("a rejected live Quick Tunnel is retired and recreated with backoff and one monitor", async () => {
+  let now = 0;
+  const f = fixture({ now: () => now });
+  await f.relay.start();
+  f.setLog("https://synthetic.trycloudflare.com\nRegistered tunnel connection");
+  await f.relay.tick();
+  assert(f.relay.origin);
+  f.setLog(
+    "https://synthetic.trycloudflare.com\nRegistered tunnel connection\nUnauthorized: Tunnel not found",
+  );
+  await f.relay.tick();
+  assert.equal(f.children[0].exitCode, 0);
+  assert.equal(f.relay.child, null);
+  assert.equal((await f.relay.health()).registered, false);
+  await f.relay.start();
+  assert.equal(f.children.length, 1);
+  now = 8000;
+  await f.relay.start();
+  assert.equal(f.children.length, 2);
+  assert.equal(f.timers.size, 1);
+  assert.equal(f.relay.origin, "");
+  await f.relay.stop();
+});
+
+test("a later registered connection supersedes an earlier tunnel rejection in the same log", async () => {
+  const f = fixture();
+  await f.relay.start();
+  f.setLog(
+    "https://synthetic.trycloudflare.com\nUnauthorized: Tunnel not found\nRegistered tunnel connection",
+  );
+  await f.relay.tick();
+  assert.equal(f.relay.child, f.children[0]);
+  assert(f.relay.origin);
+  await f.relay.stop();
+});

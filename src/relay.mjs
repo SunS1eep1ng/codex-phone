@@ -150,6 +150,9 @@ export class CloudflareRelay {
       monitorIntervalMs: 4000,
       stopTimeoutMs: 1500,
       probe: probeRelay,
+      now: Date.now,
+      restartBackoffMs: 8000,
+      restartMaxBackoffMs: 60000,
       ...dependencies,
     };
     this.child = null;
@@ -163,6 +166,9 @@ export class CloudflareRelay {
     this.epoch = (config.deviceId || "local") + ":tunnel:0";
     this.registration = null;
     this.startAbort = null;
+    this.recovering = null;
+    this.nextStartAt = 0;
+    this.invalidations = 0;
     this.logfile = join(dir, "cloudflared.log");
   }
   current(generation, child) {
@@ -193,6 +199,7 @@ export class CloudflareRelay {
       );
     if (this.starting) return this.starting;
     if (this.child) return;
+    if (this.dependencies.now() < this.nextStartAt) return;
     const cf = this.config.relay;
     if (!cf.registrationSecret || !cf.endpoint)
       throw new PhoneError("cloudflare_not_deployed");
@@ -284,6 +291,16 @@ export class CloudflareRelay {
       return;
     }
     if (!this.current(generation, child)) return;
+    // Quick Tunnels can be invalidated while cloudflared remains alive and
+    // retries forever. A fresh tunnel is required after this terminal rejection.
+    const log = String(text || "");
+    const invalidated = log.lastIndexOf("Unauthorized: Tunnel not found");
+    if (
+      invalidated >= 0 &&
+      invalidated > log.lastIndexOf("Registered tunnel connection")
+    ) {
+      return this.retireInvalidatedChild(generation, child);
+    }
     const origin = String(text || "")
       .match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g)
       ?.at(-1);
@@ -337,6 +354,40 @@ export class CloudflareRelay {
     })();
     return registration.promise;
   }
+  async retireInvalidatedChild(generation, child) {
+    if (!this.current(generation, child)) return;
+    if (this.recovering) return this.recovering;
+    const retiredGeneration = ++this.generation;
+    this.epoch =
+      (this.config.deviceId || "local") + ":tunnel:" + retiredGeneration;
+    this.origin = "";
+    this.error =
+      "TUNNEL_INVALIDATED: Cloudflare rejected the live tunnel; waiting to create a fresh tunnel.";
+    this.registration?.controller.abort();
+    this.registration = null;
+    const recovering = (async () => {
+      await this.stopChild(child);
+      if (!this.current(retiredGeneration, child)) return;
+      if (child.exitCode === null || child.exitCode === undefined) {
+        this.error = "TUNNEL_STOP_FAILED: invalidated tunnel has not exited.";
+        return;
+      }
+      this.child = null;
+      this.nextStartAt =
+        this.dependencies.now() +
+        Math.min(
+          this.dependencies.restartMaxBackoffMs,
+          this.dependencies.restartBackoffMs *
+            2 ** Math.min(this.invalidations++, 8),
+        );
+    })();
+    this.recovering = recovering;
+    try {
+      await recovering;
+    } finally {
+      if (this.recovering === recovering) this.recovering = null;
+    }
+  }
   async stopChild(child) {
     if (!child) return;
     await new Promise((resolve) => {
@@ -374,6 +425,8 @@ export class CloudflareRelay {
   async stop() {
     if (this.stopping) return this.stopping;
     this.stopped = true;
+    this.nextStartAt = 0;
+    this.invalidations = 0;
     ++this.generation;
     this.epoch =
       (this.config.deviceId || "local") + ":tunnel:" + this.generation;

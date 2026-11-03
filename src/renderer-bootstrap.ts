@@ -41,16 +41,21 @@ export function createRendererBootstrapSource(
     const notificationMethods = ${notificationMethodsJson};
     const lifecycle = ${JSON.stringify(lifecycle)};
     const familyKey = lifecycle.familyNamespace + '_lifecycle';
+    const releaseManager = (key) => {
+      const value = globalThis[key];
+      if (value && value.__codexPhoneOwned && typeof value.dispose === 'function') value.dispose();
+      delete globalThis[key];
+    };
     const previousLifecycle = globalThis[familyKey];
     if ((lifecycle.generation > 0 && globalThis[globalName + '_cancelled']) || (previousLifecycle && previousLifecycle.generation > lifecycle.generation)) {
-      delete globalThis[globalName + '_manager'];
+      releaseManager(globalName + '_manager');
       throw new Error('Native adapter lifecycle was cancelled.');
     }
     if (lifecycle.generation === 0) delete globalThis[globalName + '_cancelled'];
     if (previousLifecycle && previousLifecycle.namespace !== globalName) {
       const oldAdapter = globalThis[previousLifecycle.namespace];
       if (oldAdapter && typeof oldAdapter.dispose === 'function') oldAdapter.dispose();
-      delete globalThis[previousLifecycle.namespace + '_manager'];
+      releaseManager(previousLifecycle.namespace + '_manager');
     }
     globalThis[familyKey] = { generation: lifecycle.generation, namespace: globalName };
     const manager = globalThis[globalName + '_manager'];
@@ -235,7 +240,8 @@ export function createRendererBootstrapSource(
           const pending = pendingServerRequests.get(id);
           if (!pending) throw new Error('No pending Desktop server request found for id ' + String(id) + '.');
           const electronBridge = globalThis.electronBridge;
-          if (!electronBridge || typeof electronBridge.sendMessageFromView !== 'function') {
+          const nativeReply = typeof manager.replyToServerRequest === 'function';
+          if (!nativeReply && (!electronBridge || typeof electronBridge.sendMessageFromView !== 'function')) {
             throw new Error('Codex Desktop response bridge is unavailable.');
           }
           const hasError = Boolean(params && typeof params === 'object' && params.error);
@@ -277,7 +283,8 @@ export function createRendererBootstrapSource(
           respondingServerRequestIds.add(id);
           let resolvedByDesktop = false;
           try {
-            await electronBridge.sendMessageFromView(responseMessage);
+            if (nativeReply) await manager.replyToServerRequest(pending, responseMessage);
+            else await electronBridge.sendMessageFromView(responseMessage);
           } catch (error) {
             resolvedByDesktop = desktopResolvedDuringResponseIds.has(id);
             if (!resolvedByDesktop) {
@@ -326,6 +333,7 @@ export function createRendererBootstrapSource(
         for (const dispose of disposers.splice(0)) {
           try { dispose(); } catch {}
         }
+        if (manager.__codexPhoneOwned && typeof manager.dispose === 'function') manager.dispose();
         if (globalThis[globalName] === adapter) delete globalThis[globalName];
       }
     };
@@ -372,6 +380,8 @@ export function createRendererDisposeSource(
     globalThis[namespace + '_cancelled'] = true;
     const adapter = globalThis[namespace];
     if (adapter && typeof adapter.dispose === 'function') adapter.dispose();
+    const manager = globalThis[namespace + '_manager'];
+    if (manager && manager.__codexPhoneOwned && typeof manager.dispose === 'function') manager.dispose();
     delete globalThis[namespace + '_manager'];
     return true;
   })()`;

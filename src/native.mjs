@@ -8,6 +8,10 @@ import {
   createRendererDisposeSource,
 } from "./renderer-bootstrap.ts";
 import { PhoneError } from "./state.mjs";
+import {
+  discoverServiceModules,
+  createServiceManagerSource,
+} from "./desktop-service.mjs";
 const contextLost = (error) =>
   /Execution context (?:was )?destroyed|Cannot find (?:default execution )?context|adapter is not installed|Compatible native Desktop manager required|Target closed|Session closed/i.test(
     error?.message || "",
@@ -254,22 +258,37 @@ export class NativeDriver extends EventEmitter {
       const binding = adapterNamespace + "_event";
       await c.call("Runtime.addBinding", { name: binding });
       current();
-      const prototype = await evaluate(
-        `(async()=>{const required=['getHostId','getConversation','sendRequest','addApprovalRequestListener','addNotificationCallback','addTurnCompletedListener','addStreamRoleStateCallback'];let url;for(const script of document.querySelectorAll('script[src]')){const source=await(await fetch(script.src)).text();const match=source.match(/app-initial-[a-z0-9]+\\.js/);if(match){url=new URL(match[0],script.src).href;break;}}if(!url)throw Error('UNSUPPORTED_DESKTOP_MODULE');const module=await import(url);const type=Object.values(module).find(v=>typeof v==='function'&&v.prototype&&required.every(k=>typeof v.prototype[k]==='function'));if(!type)throw Error('UNSUPPORTED_DESKTOP_MANAGER');return type.prototype;})()`,
-        false,
-      );
+      const moduleUrls = await discoverServiceModules(c);
       current();
-      if (!prototype?.objectId) throw Error("UNSUPPORTED_DESKTOP_MANAGER");
-      const objects = await c.call("Runtime.queryObjects", {
-        prototypeObjectId: prototype.objectId,
-        objectGroup: adapterNamespace,
-      });
+      const service = moduleUrls.length
+        ? await evaluate(
+            createServiceManagerSource({
+              moduleUrls,
+              managerKey: adapterNamespace + "_manager",
+              familyNamespace: this.baseNamespace,
+              generation,
+            }),
+          )
+        : null;
       current();
-      await c.call("Runtime.callFunctionOn", {
-        objectId: objects.objects.objectId,
-        functionDeclaration: `function(){const manager=this.find(v=>!v.disposed&&v.getHostId()==='local');if(!manager)throw Error('NATIVE_MANAGER_MISSING');globalThis[${JSON.stringify(adapterNamespace + "_manager")}]=manager;return true;}`,
-        returnByValue: true,
-      });
+      if (service?.kind !== "desktop-service-rpc") {
+        const prototype = await evaluate(
+          `(async()=>{const required=['getHostId','getConversation','sendRequest','addApprovalRequestListener','addNotificationCallback','addTurnCompletedListener','addStreamRoleStateCallback'];let url;for(const script of document.querySelectorAll('script[src]')){const source=await(await fetch(script.src)).text();const match=source.match(/app-initial-[a-z0-9]+\\.js/);if(match){url=new URL(match[0],script.src).href;break;}}if(!url)throw Error('UNSUPPORTED_DESKTOP_MODULE');const module=await import(url);const type=Object.values(module).find(v=>typeof v==='function'&&v.prototype&&required.every(k=>typeof v.prototype[k]==='function'));if(!type)throw Error('UNSUPPORTED_DESKTOP_MANAGER');return type.prototype;})()`,
+          false,
+        );
+        current();
+        if (!prototype?.objectId) throw Error("UNSUPPORTED_DESKTOP_MANAGER");
+        const objects = await c.call("Runtime.queryObjects", {
+          prototypeObjectId: prototype.objectId,
+          objectGroup: adapterNamespace,
+        });
+        current();
+        await c.call("Runtime.callFunctionOn", {
+          objectId: objects.objects.objectId,
+          functionDeclaration: `function(){const manager=this.find(v=>!v.disposed&&v.getHostId()==='local');if(!manager)throw Error('NATIVE_MANAGER_MISSING');globalThis[${JSON.stringify(adapterNamespace + "_manager")}]=manager;return true;}`,
+          returnByValue: true,
+        });
+      }
       current();
       c.on("event", (m) => {
         if (
